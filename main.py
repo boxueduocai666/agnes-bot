@@ -1,12 +1,13 @@
 import os
-import logging
+import threading
+from http.server import HTTPServer, BaseHTTPRequestHandler
 from collections import defaultdict
 from telegram import Update
 from telegram.ext import ApplicationBuilder, ContextTypes, CommandHandler, MessageHandler, filters
 from openai import OpenAI
 from duckduckgo_search import DDGS
 
-# 从 Render 环境变量中安全获取配置
+# 从 Render 环境变量中获取配置
 AGNES_API_KEY = os.environ.get("AGNES_API_KEY")
 AGNES_BASE_URL = "https://apihub.agnes-ai.com/v1"
 MODEL_NAME = "agnes-2.0-flash"
@@ -14,11 +15,24 @@ TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
 
 client = OpenAI(api_key=AGNES_API_KEY, base_url=AGNES_BASE_URL)
 
-# 内存缓存：{chat_id: [{"user": "张三", "text": "你好", "message_id": 123}]}
 group_history = defaultdict(list)
-MAX_HISTORY = 100  # 每个群最大保留消息条数
+MAX_HISTORY = 100
 
-# 简单的网页搜索函数
+# 1. 启动简易 HTTP 服务，响应 Render 的健康检查，彻底杜绝 Timed out 超时崩溃
+def run_dummy_server():
+    port = int(os.environ.get("PORT", 10000))
+    class SimpleHandler(BaseHTTPRequestHandler):
+        def do_GET(self):
+            self.send_response(200)
+            self.end_headers()
+            self.wfile.write(b"Bot is alive!")
+        def log_message(self, format, *args):
+            return
+
+    server = HTTPServer(('0.0.0.0', port), SimpleHandler)
+    server.serve_forever()
+
+# 2. 网页搜索函数
 def search_web(query: str) -> str:
     try:
         with DDGS() as ddgs:
@@ -30,7 +44,7 @@ def search_web(query: str) -> str:
     except Exception as e:
         return f"搜索出错: {str(e)}"
 
-# 监听普通消息并记录，同时响应 Direct/@ 问答
+# 3. 消息处理 & 联网问答
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not update.message or not update.message.text:
         return
@@ -41,17 +55,11 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text
     message_id = update.message.message_id
 
-    # 1. 缓存消息（带上 message_id，忽略指令）
     if not text.startswith('/'):
-        group_history[chat_id].append({
-            "user": user_name,
-            "text": text,
-            "message_id": message_id
-        })
+        group_history[chat_id].append({"user": user_name, "text": text, "message_id": message_id})
         if len(group_history[chat_id]) > MAX_HISTORY:
             group_history[chat_id].pop(0)
 
-    # 2. 基础问答（私聊，或者在群里被 @ 时触发）
     bot_username = context.bot.username
     is_private = chat.type == "private"
     is_mentioned = bot_username and f"@{bot_username}" in text
@@ -61,19 +69,13 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not prompt:
             return
 
-        # 发送一个“正在思考/搜索”的提示
         processing_msg = await update.message.reply_text("正在联网查询中...")
-
         try:
-            # 自动执行网页搜索，获取实时资讯
             search_results = search_web(prompt)
-
             system_prompt = (
-                "你是一个精明的 AI 助手。用户向你提问，并附带了相关的互联网实时搜索结果。\n"
-                "请根据以下搜索结果，准确、实时地回答用户的问题。如果搜索结果中没有答案，请根据你的知识库回答并说明。\n"
+                "你是一个精明的 AI 助手。请根据以下联网搜索结果，实时、准确地回答用户的问题。\n"
                 f"实时搜索结果：\n{search_results}"
             )
-
             response = client.chat.completions.create(
                 model=MODEL_NAME,
                 messages=[
@@ -81,62 +83,49 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     {"role": "user", "content": prompt}
                 ]
             )
-            reply = response.choices[0].message.content
-            
-            # 编辑更新回复内容
             await context.bot.edit_message_text(
-                chat_id=chat_id,
-                message_id=processing_msg.message_id,
-                text=reply,
-                parse_mode="Markdown"
+                chat_id=chat_id, message_id=processing_msg.message_id,
+                text=response.choices[0].message.content, parse_mode="HTML"
             )
         except Exception as e:
             await context.bot.edit_message_text(
-                chat_id=chat_id,
-                message_id=processing_msg.message_id,
+                chat_id=chat_id, message_id=processing_msg.message_id,
                 text=f"请求失败: {str(e)}"
             )
 
-# 群总结命令 /summary（支持蓝色可跳转标题）
+# 4. 群总结命令 /summary
 async def handle_summary(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat = update.effective_chat
     chat_id = chat.id
     history = group_history.get(chat_id, [])
 
     if len(history) < 3:
-        await update.message.reply_text("群内消息记录太少，还不足以生成总结哦。")
+        await update.message.reply_text("记录太少，无法总结。")
         return
 
-    status_msg = await update.message.reply_text("正在读取历史消息并生成总结...")
+    status_msg = await update.message.reply_text("正在生成总结...")
 
     if chat.username:
         chat_link_prefix = f"https://t.me/{chat.username}"
     else:
-        chat_id_str = str(chat_id)
-        if chat_id_str.startswith("-100"):
-            internal_id = chat_id_str[4:]
-        else:
-            internal_id = chat_id_str.replace("-", "")
-        chat_link_prefix = f"https://t.me/c/{internal_id}"
+        cid = str(chat_id).replace("-100", "").replace("-", "")
+        chat_link_prefix = f"https://t.me/c/{cid}"
 
     formatted_lines = []
     for item in history:
         msg_link = f"{chat_link_prefix}/{item['message_id']}"
-        formatted_lines.append(f"[消息链接: {msg_link}] {item['user']}: {item['text']}")
+        formatted_lines.append(f"• <a href='{msg_link}'>{item['user']}</a>: {item['text']}")
     
     formatted_history = "\n".join(formatted_lines)
     msg_count = len(history)
 
     system_prompt = (
-        "你是一个精细化的群聊摘要助手。请根据提供的聊天记录（每条记录前都带有对应的专属跳转链接），严格按照以下格式输出：\n\n"
-        f"📝 **群聊 AI 总结**\n"
-        f"💬 已分析 {msg_count} 条有效消息，整理出主要话题\n\n"
-        "请列出 3-5 个核心话题。每个话题的标题必须采用 Markdown 超链接格式，格式为：`[序号. 话题名称](对应的消息链接)`。\n"
-        "例如：`1. [W电源装机图](https://t.me/c/...)`\n"
-        "并在标题下方详细描述该话题的讨论内容和细节。\n\n"
-        "最后附上一行固定提示：\n"
-        "_点击蓝色标题可跳转到相关消息。_\n\n"
-        "要求：忽略无意义的打招呼和纯灌水，重点提取有价值的讨论。直接输出总结内容，不要带任何多余的客套话。"
+        "你是一个群聊总结助手。请严格按照以下 HTML 格式输出：\n\n"
+        "<b>📝 群聊 AI 总结</b>\n"
+        f"💬 已分析 {msg_count} 条消息\n\n"
+        "请列出 3-5 个话题。话题标题格式为：<b>1. <a href='对应的跳转链接'>话题名称</a></b>\n"
+        "内容简短描述。最后加上：<i>点击蓝色标题可跳转。</i>\n\n"
+        "不要使用 Markdown 符号，全部使用 HTML 标签(<b>, <a>, <i>)。"
     )
 
     try:
@@ -147,25 +136,20 @@ async def handle_summary(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 {"role": "user", "content": f"聊天记录:\n{formatted_history}"}
             ]
         )
-        summary = response.choices[0].message.content
         await context.bot.edit_message_text(
-            chat_id=chat_id,
-            message_id=status_msg.message_id,
-            text=summary,
-            parse_mode="Markdown"
+            chat_id=chat_id, message_id=status_msg.message_id,
+            text=response.choices[0].message.content, parse_mode="HTML"
         )
     except Exception as e:
-        await context.bot.edit_message_text(
-            chat_id=chat_id,
-            message_id=status_msg.message_id,
-            text=f"生成总结出错: {str(e)}"
-        )
+        await context.bot.edit_message_text(chat_id=chat_id, message_id=status_msg.message_id, text=f"出错: {str(e)}")
 
 if __name__ == "__main__":
+    # 启动后台保活服务，防止 Render 报超时错误
+    threading.Thread(target=run_dummy_server, daemon=True).start()
+    
     app = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
     app.add_handler(CommandHandler("summary", handle_summary))
     app.add_handler(MessageHandler(filters.TEXT, handle_message))
     
     print("Bot 已成功运行...")
     app.run_polling()
-
