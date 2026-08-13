@@ -1,47 +1,129 @@
 import os
 import threading
-import asyncio
 from flask import Flask
-from aiogram import Bot, Dispatcher
+from telegram.ext import (
+    Application,
+    CommandHandler,
+    MessageHandler,
+    filters,
+)
 
-# ==================== 1. Flask 网页服务（防掉线欺骗层） ====================
+from bot_logic import (
+    handle_message,
+    handle_summary,
+    handle_start,
+)
+
+# ============================================================
+# 1. Flask Web Server
+# ============================================================
+
 app = Flask(__name__)
 
-@app.route('/')
+
+@app.route("/")
 def home():
     return "Agnes Bot is running smoothly!"
 
+
+@app.route("/health")
+def health():
+    return "OK"
+
+
 def run_web_server():
-    # 获取 Render 动态分配的端口，默认 10000
     port = int(os.environ.get("PORT", 10000))
-    app.run(host='0.0.0.0', port=port)
 
-# 在后台线程中启动网页服务，与 Telegram 机器人互不干扰
-threading.Thread(target=run_web_server, daemon=True).start()
-
-
-# ==================== 2. Telegram 机器人核心逻辑 ====================
-# 读取环境变量中的 Token
-# 直接读取你在后台配好的 TELEGRAM_TOKEN
-BOT_TOKEN = os.getenv("TELEGRAM_TOKEN")
-
-if not BOT_TOKEN:
-    raise ValueError("未检测到 BOT_TOKEN 环境变量，请在 Render 后台的 Secrets 中配置！")
-
-# 初始化 Bot 和 Dispatcher
-bot = Bot(token=BOT_TOKEN)
-dp = Dispatcher()
-
-# 导入你写在 bot_logic.py 里的业务逻辑和搜索处理函数
-from bot_logic import register_handlers
-register_handlers(dp)  # 注册你的所有消息处理和搜索路由
+    app.run(
+        host="0.0.0.0",
+        port=port
+    )
 
 
-async def main():
-    print("Bot 正在启动并准备接收消息...")
-    # 启动长轮询，联网搜索功能将由 bot_logic.py 中的 ddgs 正常提供
-    await dp.start_polling(bot)
+# ============================================================
+# 2. Telegram Bot
+# ============================================================
 
+def main():
+    token = os.environ.get("TELEGRAM_TOKEN")
+
+    if not token:
+        raise RuntimeError(
+            "未检测到 TELEGRAM_TOKEN，请在 Render 的 Environment Variables 中配置。"
+        )
+
+    # --------------------------------------------------------
+    # Render Web Service 需要 HTTP 服务
+    # 所以在后台线程启动 Flask
+    # --------------------------------------------------------
+
+    web_thread = threading.Thread(
+        target=run_web_server,
+        daemon=True
+    )
+
+    web_thread.start()
+
+    # --------------------------------------------------------
+    # 创建 Telegram Application
+    # 使用 python-telegram-bot
+    # --------------------------------------------------------
+
+    application = (
+        Application.builder()
+        .token(token)
+        .build()
+    )
+
+    # --------------------------------------------------------
+    # /start
+    # --------------------------------------------------------
+
+    application.add_handler(
+        CommandHandler(
+            "start",
+            handle_start
+        )
+    )
+
+    # --------------------------------------------------------
+    # /summary
+    # --------------------------------------------------------
+
+    application.add_handler(
+        CommandHandler(
+            "summary",
+            handle_summary
+        )
+    )
+
+    # --------------------------------------------------------
+    # 普通文字 + 图片
+    # --------------------------------------------------------
+
+    application.add_handler(
+        MessageHandler(
+            filters.TEXT | filters.PHOTO,
+            handle_message
+        )
+    )
+
+    print("========================================")
+    print("Agnes Bot 正在启动...")
+    print("Telegram Bot: OK")
+    print("Flask Server: OK")
+    print("========================================")
+
+    # --------------------------------------------------------
+    # 启动 Telegram 长轮询
+    # --------------------------------------------------------
+
+    application.run_polling()
+
+
+# ============================================================
+# 3. 程序入口
+# ============================================================
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    main()
