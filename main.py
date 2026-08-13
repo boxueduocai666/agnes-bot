@@ -22,7 +22,8 @@ threading.Thread(target=run_web_server, daemon=True).start()
 
 # ==================== 2. Telegram 机器人核心逻辑 ====================
 # 读取环境变量中的 Token
-BOT_TOKEN = os.getenv("BOT_TOKEN")
+# 直接读取你在后台配好的 TELEGRAM_TOKEN
+BOT_TOKEN = os.getenv("TELEGRAM_TOKEN")
 
 if not BOT_TOKEN:
     raise ValueError("未检测到 BOT_TOKEN 环境变量，请在 Render 后台的 Secrets 中配置！")
