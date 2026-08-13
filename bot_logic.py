@@ -48,9 +48,9 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             
         processing_msg = await update.message.reply_text("正在看图分析中...")
         try:
-            # 获取最高清晰度的图片文件
+            # 获取最高清晰度的图片文件并拼成完整直链
             photo_file = await update.message.photo[-1].get_file()
-            image_url = photo_file.file_path  # Telegram 提供的直链
+            image_url = f"https://api.telegram.org/file/bot{context.bot.token}/{photo_file.file_path}"
 
             user_prompt = text.replace(f"@{bot_username}", "").strip() if bot_username else text.strip()
             if not user_prompt:
@@ -166,4 +166,3 @@ async def handle_summary(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
     except Exception as e:
         await context.bot.edit_message_text(chat_id=chat_id, message_id=status_msg.message_id, text=f"出错: {str(e)}")
-
