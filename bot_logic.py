@@ -27,67 +27,26 @@ def search_web(query: str) -> str:
     except Exception as e:
         return f"搜索出错: {str(e)}"
 
-# 统一消息处理（支持：文本、@提问、图片多模态分析）
+# 消息处理 & 联网问答
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not update.message:
+    if not update.message or not update.message.text:
         return
 
     chat = update.effective_chat
     chat_id = chat.id
     user_name = update.effective_user.first_name or "Anonymous"
-    text = update.message.text or update.message.caption or ""
+    text = update.message.text
     message_id = update.message.message_id
-    bot_username = context.bot.username
-    is_private = chat.type == "private"
-    is_mentioned = bot_username and f"@{bot_username}" in text
 
-    # 1. 如果用户发送的是图片（看图说话功能）
-    if update.message.photo:
-        if not (is_private or is_mentioned):
-            return  # 在群里时，发图需要 @ 机器人或私聊才触发，避免刷屏
-            
-        processing_msg = await update.message.reply_text("正在看图分析中...")
-        try:
-            # 获取最高清晰度的图片文件并拼成完整直链
-            photo_file = await update.message.photo[-1].get_file()
-            image_url = f"https://api.telegram.org/file/bot{context.bot.token}/{photo_file.file_path}"
-
-            user_prompt = text.replace(f"@{bot_username}", "").strip() if bot_username else text.strip()
-            if not user_prompt:
-                user_prompt = "请帮我详细分析一下这张图片的内容。"
-
-            # 调用大模型多模态能力
-            response = client.chat.completions.create(
-                model=MODEL_NAME,
-                messages=[
-                    {
-                        "role": "user",
-                        "content": [
-                            {"type": "text", "text": user_prompt},
-                            {"type": "image_url", "image_url": {"url": image_url}}
-                        ]
-                    }
-                ]
-            )
-            reply = response.choices[0].message.content
-            await context.bot.edit_message_text(
-                chat_id=chat_id, message_id=processing_msg.message_id,
-                text=reply, parse_mode="HTML"
-            )
-        except Exception as e:
-            await context.bot.edit_message_text(
-                chat_id=chat_id, message_id=processing_msg.message_id,
-                text=f"看图分析出错: {str(e)}"
-            )
-        return
-
-    # 2. 普通文本消息记录缓存
-    if text and not text.startswith('/'):
+    if not text.startswith('/'):
         group_history[chat_id].append({"user": user_name, "text": text, "message_id": message_id})
         if len(group_history[chat_id]) > MAX_HISTORY:
             group_history[chat_id].pop(0)
 
-    # 3. 文本提问与联网搜索
+    bot_username = context.bot.username
+    is_private = chat.type == "private"
+    is_mentioned = bot_username and f"@{bot_username}" in text
+
     if is_private or is_mentioned:
         prompt = text.replace(f"@{bot_username}", "").strip() if bot_username else text.strip()
         if not prompt:
