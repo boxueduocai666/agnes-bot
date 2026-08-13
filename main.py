@@ -4,6 +4,7 @@ from collections import defaultdict
 from telegram import Update
 from telegram.ext import ApplicationBuilder, ContextTypes, CommandHandler, MessageHandler, filters
 from openai import OpenAI
+from duckduckgo_search import DDGS
 
 # 从 Render 环境变量中安全获取配置
 AGNES_API_KEY = os.environ.get("AGNES_API_KEY")
@@ -16,6 +17,18 @@ client = OpenAI(api_key=AGNES_API_KEY, base_url=AGNES_BASE_URL)
 # 内存缓存：{chat_id: [{"user": "张三", "text": "你好", "message_id": 123}]}
 group_history = defaultdict(list)
 MAX_HISTORY = 100  # 每个群最大保留消息条数
+
+# 简单的网页搜索函数
+def search_web(query: str) -> str:
+    try:
+        with DDGS() as ddgs:
+            results = [r for r in ddgs.text(query, max_results=3)]
+            if not results:
+                return "未找到相关联网信息。"
+            search_summary = "\n".join([f"- {r['title']}: {r['body']} ({r['href']})" for r in results])
+            return search_summary
+    except Exception as e:
+        return f"搜索出错: {str(e)}"
 
 # 监听普通消息并记录，同时响应 Direct/@ 问答
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -48,18 +61,41 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not prompt:
             return
 
+        # 发送一个“正在思考/搜索”的提示
+        processing_msg = await update.message.reply_text("正在联网查询中...")
+
         try:
+            # 自动执行网页搜索，获取实时资讯
+            search_results = search_web(prompt)
+
+            system_prompt = (
+                "你是一个精明的 AI 助手。用户向你提问，并附带了相关的互联网实时搜索结果。\n"
+                "请根据以下搜索结果，准确、实时地回答用户的问题。如果搜索结果中没有答案，请根据你的知识库回答并说明。\n"
+                f"实时搜索结果：\n{search_results}"
+            )
+
             response = client.chat.completions.create(
                 model=MODEL_NAME,
                 messages=[
-                    {"role": "system", "content": "你是一个友好的 Telegram 群组小助手。"},
+                    {"role": "system", "content": system_prompt},
                     {"role": "user", "content": prompt}
                 ]
             )
             reply = response.choices[0].message.content
-            await update.message.reply_text(reply, parse_mode="Markdown")
+            
+            # 编辑更新回复内容
+            await context.bot.edit_message_text(
+                chat_id=chat_id,
+                message_id=processing_msg.message_id,
+                text=reply,
+                parse_mode="Markdown"
+            )
         except Exception as e:
-            await update.message.reply_text(f"请求失败: {str(e)}")
+            await context.bot.edit_message_text(
+                chat_id=chat_id,
+                message_id=processing_msg.message_id,
+                text=f"请求失败: {str(e)}"
+            )
 
 # 群总结命令 /summary（支持蓝色可跳转标题）
 async def handle_summary(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -73,19 +109,16 @@ async def handle_summary(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     status_msg = await update.message.reply_text("正在读取历史消息并生成总结...")
 
-    # 动态生成该群的消息跳转链接前缀
     if chat.username:
         chat_link_prefix = f"https://t.me/{chat.username}"
     else:
         chat_id_str = str(chat_id)
-        # 处理 Telegram 超级群的私有链接格式 t.me/c/xxxx/id
         if chat_id_str.startswith("-100"):
             internal_id = chat_id_str[4:]
         else:
             internal_id = chat_id_str.replace("-", "")
         chat_link_prefix = f"https://t.me/c/{internal_id}"
 
-    # 格式化历史记录，把每条消息和它的专属跳转链接绑定
     formatted_lines = []
     for item in history:
         msg_link = f"{chat_link_prefix}/{item['message_id']}"
@@ -94,7 +127,6 @@ async def handle_summary(update: Update, context: ContextTypes.DEFAULT_TYPE):
     formatted_history = "\n".join(formatted_lines)
     msg_count = len(history)
 
-    # 给 AI 设定带有跳转链接和样式的严格模板
     system_prompt = (
         "你是一个精细化的群聊摘要助手。请根据提供的聊天记录（每条记录前都带有对应的专属跳转链接），严格按照以下格式输出：\n\n"
         f"📝 **群聊 AI 总结**\n"
@@ -136,3 +168,4 @@ if __name__ == "__main__":
     
     print("Bot 已成功运行...")
     app.run_polling()
+
