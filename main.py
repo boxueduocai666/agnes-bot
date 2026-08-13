@@ -1,22 +1,19 @@
 import os
 import threading
-from http.server import HTTPServer, BaseHTTPRequestHandler
+from flask import Flask
 
-# --- 1. 专门用来应付 Render 端口检查的轻量网页服务 ---
-class HealthCheckHandler(BaseHTTPRequestHandler):
-    def do_GET(self):
-        self.send_response(200)
-        self.end_headers()
-        self.wfile.write(b"Bot is running!")
-    
-    def log_message(self, format, *args):
-        # 屏蔽 HTTP 请求日志，避免刷屏
-        pass
+# 1. 创建一个极简的 Web 服务
+app = Flask(__name__)
 
-def start_dummy_server():
+@app.route('/')
+def home():
+    return "Bot is running!"
+
+def run_web_server():
+    # 获取 Render 分配的端口，如果没有则默认 10000
     port = int(os.environ.get("PORT", 10000))
-    server = HTTPServer(("0.0.0.0", port), HealthCheckHandler)
-    server.serve_forever()
+    app.run(host='0.0.0.0', port=port)
 
-# 在后台线程中启动网页服务（这样就不会阻塞你的 Bot 运行了）
-threading.Thread(target=start_dummy_server, daemon=True).start()
+# 2. 在程序启动时，通过多线程在后台运行这个 Web 服务
+# 这行代码一定要放在你启动 Bot 的 main 函数之前
+threading.Thread(target=run_web_server, daemon=True).start()
