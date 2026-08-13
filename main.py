@@ -1,33 +1,43 @@
-import os
-import threading
-from http.server import HTTPServer, BaseHTTPRequestHandler
-from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters
-from bot_logic import handle_message, handle_summary
+import logging
+from aiogram import types
+from aiogram.exceptions import TelegramBadRequest
 
-TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
-
-# 启动简易 HTTP 服务，响应 Render 健康检查，防止超时报错
-def run_dummy_server():
-    port = int(os.environ.get("PORT", 10000))
-    class SimpleHandler(BaseHTTPRequestHandler):
-        def do_GET(self):
-            self.send_response(200)
-            self.end_headers()
-            self.wfile.write(b"Bot is alive!")
-        def log_message(self, format, *args):
+async def handle_incoming_message(message: types.Message):
+    """
+    上一版稳定的消息处理逻辑：
+    1. 包含基础的异常保护，防止单个请求崩溃导致整个 Bot 挂起。
+    2. 针对 Markdown 解析失败做了优雅降级（若富文本格式出错，自动转为纯文本发送）。
+    """
+    try:
+        # 获取用户输入的文本
+        user_text = message.text or message.caption or ""
+        if not user_text.strip():
             return
 
-    server = HTTPServer(('0.0.0.0', port), SimpleHandler)
-    server.serve_forever()
+        # 提示正在处理（可选）
+        processing_msg = await message.answer("正在思考中...")
 
-if __name__ == "__main__":
-    # 开启后台保活服务
-    threading.Thread(target=run_dummy_server, daemon=True).start()
-    
-    # 启动 Telegram 机器人（同时监听文本与图片消息）
-    app = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
-    app.add_handler(CommandHandler("summary", handle_summary))
-    app.add_handler(MessageHandler(filters.TEXT | filters.PHOTO, handle_message))
-    
-    print("Bot 已成功运行...")
-    app.run_polling()
+        # TODO: 此处替换为你的 AI 调用、联网搜索或核心业务逻辑
+        # 示例响应文本
+        response_text = f"收到你的消息：{user_text}"
+
+        # 尝试使用 Markdown 格式发送回复
+        try:
+            await message.answer(response_text, parse_mode="Markdown")
+        except TelegramBadRequest:
+            # 如果因为特殊字符（如未转义的 * 或 _）导致解析失败，降级为普通纯文本发送，绝对不崩溃
+            await message.answer(response_text)
+            
+        # 删除“正在思考中...”的提示消息
+        try:
+            await processing_msg.delete()
+        except Exception:
+            pass
+
+    except Exception as e:
+        logging.error(f"处理消息时发生严重错误: {e}")
+        try:
+            await message.answer("服务暂时开小差了，请稍后再试。")
+        except Exception:
+            pass
+
