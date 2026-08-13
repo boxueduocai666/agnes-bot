@@ -13,7 +13,7 @@ TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
 
 client = OpenAI(api_key=AGNES_API_KEY, base_url=AGNES_BASE_URL)
 
-# 内存缓存：{chat_id: [{"user": "张三", "text": "你好"}]}
+# 内存缓存：{chat_id: [{"user": "张三", "text": "你好", "message_id": 123}]}
 group_history = defaultdict(list)
 MAX_HISTORY = 100  # 每个群最大保留消息条数
 
@@ -22,23 +22,29 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not update.message or not update.message.text:
         return
 
-    chat_id = update.effective_chat.id
+    chat = update.effective_chat
+    chat_id = chat.id
     user_name = update.effective_user.first_name or "Anonymous"
     text = update.message.text
+    message_id = update.message.message_id
 
-    # 1. 缓存消息（忽略指令消息）
+    # 1. 缓存消息（带上 message_id，忽略指令）
     if not text.startswith('/'):
-        group_history[chat_id].append(f"{user_name}: {text}")
+        group_history[chat_id].append({
+            "user": user_name,
+            "text": text,
+            "message_id": message_id
+        })
         if len(group_history[chat_id]) > MAX_HISTORY:
             group_history[chat_id].pop(0)
 
     # 2. 基础问答（私聊，或者在群里被 @ 时触发）
     bot_username = context.bot.username
-    is_private = update.message.chat.type == "private"
-    is_mentioned = f"@{bot_username}" in text
+    is_private = chat.type == "private"
+    is_mentioned = bot_username and f"@{bot_username}" in text
 
     if is_private or is_mentioned:
-        prompt = text.replace(f"@{bot_username}", "").strip()
+        prompt = text.replace(f"@{bot_username}", "").strip() if bot_username else text.strip()
         if not prompt:
             return
 
@@ -55,25 +61,50 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except Exception as e:
             await update.message.reply_text(f"请求失败: {str(e)}")
 
-# 群总结命令 /summary
+# 群总结命令 /summary（支持蓝色可跳转标题）
 async def handle_summary(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    chat_id = update.effective_chat.id
+    chat = update.effective_chat
+    chat_id = chat.id
     history = group_history.get(chat_id, [])
 
-    if len(history) < 5:
+    if len(history) < 3:
         await update.message.reply_text("群内消息记录太少，还不足以生成总结哦。")
         return
 
     status_msg = await update.message.reply_text("正在读取历史消息并生成总结...")
-    formatted_history = "\n".join(history)
 
+    # 动态生成该群的消息跳转链接前缀
+    if chat.username:
+        chat_link_prefix = f"https://t.me/{chat.username}"
+    else:
+        chat_id_str = str(chat_id)
+        # 处理 Telegram 超级群的私有链接格式 t.me/c/xxxx/id
+        if chat_id_str.startswith("-100"):
+            internal_id = chat_id_str[4:]
+        else:
+            internal_id = chat_id_str.replace("-", "")
+        chat_link_prefix = f"https://t.me/c/{internal_id}"
+
+    # 格式化历史记录，把每条消息和它的专属跳转链接绑定
+    formatted_lines = []
+    for item in history:
+        msg_link = f"{chat_link_prefix}/{item['message_id']}"
+        formatted_lines.append(f"[消息链接: {msg_link}] {item['user']}: {item['text']}")
+    
+    formatted_history = "\n".join(formatted_lines)
+    msg_count = len(history)
+
+    # 给 AI 设定带有跳转链接和样式的严格模板
     system_prompt = (
-        "你是一个高效的群聊摘要助手。请根据提供的聊天记录进行客观总结。\n"
-        "要求：\n"
-        "1. 提取 2-4 个主要讨论议题\n"
-        "2. 梳理主要结论或共识\n"
-        "3. 待办事项提取（如有）\n"
-        "4. 忽略打招呼等无意义闲聊，输出结构明确的 Markdown"
+        "你是一个精细化的群聊摘要助手。请根据提供的聊天记录（每条记录前都带有对应的专属跳转链接），严格按照以下格式输出：\n\n"
+        f"📝 **群聊 AI 总结**\n"
+        f"💬 已分析 {msg_count} 条有效消息，整理出主要话题\n\n"
+        "请列出 3-5 个核心话题。每个话题的标题必须采用 Markdown 超链接格式，格式为：`[序号. 话题名称](对应的消息链接)`。\n"
+        "例如：`1. [W电源装机图](https://t.me/c/...)`\n"
+        "并在标题下方详细描述该话题的讨论内容和细节。\n\n"
+        "最后附上一行固定提示：\n"
+        "_点击蓝色标题可跳转到相关消息。_\n\n"
+        "要求：忽略无意义的打招呼和纯灌水，重点提取有价值的讨论。直接输出总结内容，不要带任何多余的客套话。"
     )
 
     try:
@@ -81,7 +112,7 @@ async def handle_summary(update: Update, context: ContextTypes.DEFAULT_TYPE):
             model=MODEL_NAME,
             messages=[
                 {"role": "system", "content": system_prompt},
-                {"role": "user", "content": f"聊天记录：\n{formatted_history}"}
+                {"role": "user", "content": f"聊天记录:\n{formatted_history}"}
             ]
         )
         summary = response.choices[0].message.content
