@@ -1,2 +1,3 @@
-aiogram>=3.0.0
-duckduckgo_search
+aiogram
+flask
+ddgs
