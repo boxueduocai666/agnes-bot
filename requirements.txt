@@ -1,3 +1,3 @@
-aiogram
 flask
+python-telegram-bot
 ddgs
