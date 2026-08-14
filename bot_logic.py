@@ -16,6 +16,7 @@ from telegram.ext import (
 
 from openai import OpenAI
 
+
 # ============================================================
 # 兼容新版 ddgs
 # ============================================================
@@ -27,14 +28,14 @@ except ImportError:
 
 
 # ============================================================
-# 1. Agnes API 配置
+# 1. NVIDIA NIM API 配置
 # ============================================================
 
 AGNES_API_KEY = os.environ.get("AGNES_API_KEY")
 
-AGNES_BASE_URL = "https://apihub.agnes-ai.com/v1"
+AGNES_BASE_URL = "https://integrate.api.nvidia.com/v1"
 
-MODEL_NAME = "agnes-2.0-flash"
+MODEL_NAME = "z-ai/glm-5.2"
 
 
 if not AGNES_API_KEY:
@@ -258,7 +259,7 @@ def search_web(query: str) -> str:
 
 
 # ============================================================
-# 9. 调用 Agnes
+# 9. 调用 AI
 # ============================================================
 
 def ask_agnes(
@@ -320,7 +321,7 @@ def format_ai_reply(text):
     `代码`
     # 标题
     - 列表
-    1. 列表
+    [蓝字](https://example.com)
     """
 
     if not text:
@@ -335,6 +336,22 @@ def format_ai_reply(text):
     # --------------------------------------------------------
 
     text = html.escape(text)
+
+
+    # --------------------------------------------------------
+    # Markdown 链接
+    #
+    # [蓝字](https://example.com)
+    #
+    # 转成 Telegram HTML 可点击链接，
+    # 不直接显示冗长 URL。
+    # --------------------------------------------------------
+
+    text = re.sub(
+        r"\[([^\]]+)\]\((https?://[^\s)]+)\)",
+        r'<a href="\2">\1</a>',
+        text
+    )
 
 
     # --------------------------------------------------------
@@ -593,9 +610,11 @@ async def analyze_image(
                         }
 
                     ]
+
                 }
 
             ]
+
         )
 
 
@@ -629,11 +648,8 @@ async def analyze_image(
 
 
         await context.bot.edit_message_text(
-
             chat_id=update.effective_chat.id,
-
             message_id=processing_msg.message_id,
-
             text=(
                 "❌ 图片分析失败\n\n"
                 f"{str(e)}"
@@ -738,25 +754,13 @@ async def handle_message(
         if replied_user:
 
             if (
-
                 replied_user.username
                 and bot_username
                 and replied_user.username.lower()
                 == bot_username.lower()
-
             ):
 
                 is_reply_to_bot = True
-
-
-    # --------------------------------------------------------
-    # 是否回复任何消息
-    # --------------------------------------------------------
-
-    is_reply = (
-        update.message.reply_to_message
-        is not None
-    )
 
 
     # ========================================================
@@ -778,10 +782,8 @@ async def handle_message(
     # 回复图片
 
     elif (
-
         update.message.reply_to_message
         and update.message.reply_to_message.photo
-
     ):
 
         target_photo = (
@@ -792,16 +794,21 @@ async def handle_message(
     if target_photo:
 
         # ----------------------------------------------------
-        # 群聊中：
-        # @机器人 / 回复任何消息 / 直接回复图片
-        # 都可以触发
+        # 图片触发规则：
+        #
+        # 私聊
+        # @机器人
+        # 回复机器人自己的消息
+        #
+        # 回复其他人的消息不会触发机器人。
         # ----------------------------------------------------
 
         allowed = (
 
             is_private
             or is_mentioned
-            or is_reply
+            or is_reply_to_bot
+
         )
 
 
@@ -873,19 +880,19 @@ async def handle_message(
 
 
     # --------------------------------------------------------
-    # 关键修改：
+    # 触发规则：
     #
-    # 回复任何人的消息，都允许机器人回答
+    # 私聊 / @机器人 / 回复机器人消息 才触发。
     #
-    # 原来这里只允许 is_reply_to_bot
-    # 现在改成 is_reply
+    # 回复群里其他人的消息不会让机器人自动插话，
+    # 避免引用别人内容时机器人自己跳出来回答。
     # --------------------------------------------------------
 
     if not (
 
         is_private
         or is_mentioned
-        or is_reply
+        or is_reply_to_bot
 
     ):
 
@@ -986,6 +993,9 @@ async def handle_message(
             "12. 如果联网搜索结果不足，"
             "明确告诉用户，不要编造。\n\n"
 
+            "13. 不要在普通回答中无意义地重复搜索结果里的长链接。"
+            "只有用户明确需要来源、链接或原文时，才给出相关链接。\n\n"
+
             "联网搜索结果：\n"
             "--------------------\n"
             f"{search_results}\n"
@@ -1021,9 +1031,11 @@ async def handle_message(
         print(f"[AI] 用户：{user_name}")
         print(f"[AI] 问题：{prompt}")
 
+
         if quote_context:
 
             print("[AI] 本次问题包含引用消息")
+
 
         print("=" * 60)
 
@@ -1140,6 +1152,7 @@ async def handle_summary(
 
             cid = cid.replace("-", "")
 
+
         chat_link_prefix = (
             f"https://t.me/c/{cid}"
         )
@@ -1203,7 +1216,10 @@ async def handle_summary(
 
         "7. 使用 emoji 小标题。\n"
 
-        "8. 不要使用 HTML。\n\n"
+        "8. 不要使用 HTML。\n"
+
+        "9. 不要在总结正文中输出聊天消息的完整 URL。"
+        "相关消息链接会由机器人统一添加，请只负责总结内容。\n\n"
 
         "推荐格式：\n\n"
 
@@ -1265,7 +1281,12 @@ async def handle_summary(
 
 
         # ----------------------------------------------------
-        # 添加消息链接
+        # 添加可点击的消息链接
+        #
+        # 只显示“消息 1 / 消息 2 …”，
+        # 点击后跳转。
+        #
+        # 不再把完整 t.me URL 堆在总结后面。
         # ----------------------------------------------------
 
         links = []
@@ -1282,7 +1303,7 @@ async def handle_summary(
 
 
             links.append(
-                f"{index}. {msg_link}"
+                f"[消息 {index}]({msg_link})"
             )
 
 
@@ -1294,7 +1315,7 @@ async def handle_summary(
 
             + "🔗 **相关消息**\n"
 
-            + "\n".join(links)
+            + " · ".join(links)
 
         )
 
