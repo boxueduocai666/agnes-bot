@@ -1,6 +1,6 @@
 import os
 import base64
-import html
+import re
 from collections import defaultdict
 
 from telegram import Update
@@ -14,25 +14,21 @@ from telegram.ext import (
 )
 
 from openai import OpenAI
-from duckduckgo_search import DDGS
+from ddgs import DDGS
 
 
 # ============================================================
-# 1. Agnes API 配置
+# 1. Agnes API
 # ============================================================
 
 AGNES_API_KEY = os.environ.get("AGNES_API_KEY")
-
 AGNES_BASE_URL = "https://apihub.agnes-ai.com/v1"
-
 MODEL_NAME = "agnes-2.0-flash"
-
 
 if not AGNES_API_KEY:
     raise RuntimeError(
         "未检测到 AGNES_API_KEY，请在 Render → Environment 中配置。"
     )
-
 
 client = OpenAI(
     api_key=AGNES_API_KEY,
@@ -50,57 +46,171 @@ MAX_HISTORY = 100
 
 
 # ============================================================
-# 3. 联网搜索
+# 3. Telegram 消息长度处理
+# ============================================================
+
+MAX_TELEGRAM_LENGTH = 4000
+
+
+def split_long_text(text: str, max_length=MAX_TELEGRAM_LENGTH):
+
+    if not text:
+        return [""]
+
+    if len(text) <= max_length:
+        return [text]
+
+    parts = []
+
+    remaining = text
+
+    while len(remaining) > max_length:
+
+        cut = remaining.rfind(
+            "\n",
+            0,
+            max_length
+        )
+
+        if cut < max_length * 0.5:
+
+            cut = remaining.rfind(
+                "。",
+                0,
+                max_length
+            )
+
+        if cut < max_length * 0.5:
+
+            cut = max_length
+
+        part = remaining[:cut].strip()
+
+        if part:
+            parts.append(part)
+
+        remaining = remaining[cut:].strip()
+
+    if remaining:
+        parts.append(remaining)
+
+    return parts
+
+
+# ============================================================
+# 4. 清理 AI 输出
+# ============================================================
+
+def clean_ai_text(text: str) -> str:
+
+    if not text:
+        return ""
+
+    text = text.strip()
+
+    # 去除可能出现的 HTML
+    text = text.replace("<br>", "\n")
+    text = text.replace("<br/>", "\n")
+    text = text.replace("<br />", "\n")
+
+    # 防止 AI 自己套一层奇怪的 Markdown
+    text = re.sub(
+        r"^```(?:markdown|text)?\s*",
+        "",
+        text,
+        flags=re.IGNORECASE
+    )
+
+    if text.endswith("```"):
+        text = text[:-3]
+
+    return text.strip()
+
+
+# ============================================================
+# 5. 联网搜索
 # ============================================================
 
 def search_web(query: str) -> str:
 
     try:
 
+        print(
+            f"[SEARCH] 开始搜索：{query}",
+            flush=True
+        )
+
         results = []
 
         with DDGS() as ddgs:
 
-            for r in ddgs.text(
+            for result in ddgs.text(
                 query,
                 max_results=5
             ):
 
-                results.append(r)
+                results.append(result)
 
         if not results:
+
+            print(
+                "[SEARCH] 没有搜索结果",
+                flush=True
+            )
+
             return "未找到相关联网信息。"
 
         output = []
 
-        for r in results:
+        for result in results:
 
-            title = r.get("title", "")
-            body = r.get("body", "")
-            href = r.get("href", "")
+            title = result.get(
+                "title",
+                ""
+            )
+
+            body = result.get(
+                "body",
+                ""
+            )
+
+            href = result.get(
+                "href",
+                ""
+            )
 
             output.append(
-                f"- {title}\n"
-                f"  {body}\n"
-                f"  链接：{href}"
+                f"标题：{title}\n"
+                f"摘要：{body}\n"
+                f"链接：{href}"
             )
+
+        print(
+            f"[SEARCH] 完成，共 {len(results)} 条",
+            flush=True
+        )
 
         return "\n\n".join(output)
 
     except Exception as e:
 
-        print("联网搜索失败：", repr(e))
+        print(
+            "[SEARCH] ❌ 搜索失败：",
+            repr(e),
+            flush=True
+        )
 
         return f"联网搜索失败：{e}"
 
 
 # ============================================================
-# 4. 调用 Agnes 文本模型
+# 6. Agnes 文本请求
 # ============================================================
 
 def ask_agnes(
     prompt: str,
-    system_prompt: str = None
+    system_prompt: str = None,
+    history=None
 ) -> str:
 
     messages = []
@@ -111,6 +221,15 @@ def ask_agnes(
             "role": "system",
             "content": system_prompt
         })
+
+    if history:
+
+        for item in history:
+
+            messages.append({
+                "role": item["role"],
+                "content": item["content"]
+            })
 
     messages.append({
         "role": "user",
@@ -130,11 +249,11 @@ def ask_agnes(
     if not content:
         return "AI 返回了空内容。"
 
-    return content
+    return clean_ai_text(content)
 
 
 # ============================================================
-# 5. 获取机器人用户名
+# 7. 获取机器人用户名
 # ============================================================
 
 async def get_bot_username(context):
@@ -145,31 +264,113 @@ async def get_bot_username(context):
 
         return me.username
 
-    except Exception:
+    except Exception as e:
+
+        print(
+            "[BOT] 获取用户名失败：",
+            repr(e),
+            flush=True
+        )
 
         return None
 
 
 # ============================================================
-# 6. 图片识别
+# 8. 获取消息文字
+# ============================================================
+
+def get_message_text(message) -> str:
+
+    if not message:
+        return ""
+
+    return (
+        message.text
+        or message.caption
+        or ""
+    )
+
+
+# ============================================================
+# 9. 获取被回复消息
+# ============================================================
+
+def get_replied_content(message) -> str:
+
+    if not message:
+        return ""
+
+    replied = message.reply_to_message
+
+    if not replied:
+        return ""
+
+    replied_text = get_message_text(
+        replied
+    )
+
+    sender = replied.from_user
+
+    if sender:
+
+        sender_name = (
+            sender.first_name
+            or sender.username
+            or "未知用户"
+        )
+
+    else:
+
+        sender_name = "未知用户"
+
+    if replied_text:
+
+        if len(replied_text) > 6000:
+
+            replied_text = (
+                replied_text[:6000]
+                + "\n……引用内容过长，已截断。"
+            )
+
+        return (
+            "【被回复消息】\n"
+            f"发送者：{sender_name}\n"
+            f"内容：\n{replied_text}"
+        )
+
+    if replied.photo:
+
+        return (
+            "【被回复消息】\n"
+            f"发送者：{sender_name}\n"
+            "内容：这是一张图片，没有文字。"
+        )
+
+    return ""
+
+
+# ============================================================
+# 10. 图片分析
 # ============================================================
 
 async def analyze_image(
     update: Update,
     context: ContextTypes.DEFAULT_TYPE,
     target_photo,
-    user_prompt: str
+    user_prompt: str,
+    replied_context: str = ""
 ):
 
     processing_msg = await update.message.reply_text(
-        "🖼️ 正在下载图片并进行分析……"
+        "🖼️ 正在分析图片…"
     )
 
     try:
 
-        # ----------------------------------------------------
-        # 第一步：从 Telegram 下载图片
-        # ----------------------------------------------------
+        print(
+            "[IMAGE] 开始下载图片",
+            flush=True
+        )
 
         photo_file = await target_photo.get_file()
 
@@ -178,52 +379,61 @@ async def analyze_image(
         if not image_bytes:
 
             raise RuntimeError(
-                "Telegram 图片下载失败，得到的图片为空。"
+                "图片下载失败。"
             )
-
-
-        # ----------------------------------------------------
-        # 第二步：转 Base64
-        # ----------------------------------------------------
 
         image_base64 = base64.b64encode(
             bytes(image_bytes)
         ).decode("utf-8")
-
-
-        # ----------------------------------------------------
-        # 第三步：构造 Data URL
-        # ----------------------------------------------------
 
         image_url = (
             "data:image/jpeg;base64,"
             + image_base64
         )
 
-
-        # ----------------------------------------------------
-        # 第四步：默认问题
-        # ----------------------------------------------------
-
         if not user_prompt.strip():
 
             user_prompt = (
-                "请详细分析这张图片。"
-                "描述图片中的主要内容、人物、物体、环境以及"
-                "能够从图片中明确判断出的信息。"
-                "不要凭空编造图片中不存在的内容。"
+                "请分析这张图片，并用清晰、自然的中文回答。"
+                "描述重要内容即可，不要编造图片中不存在的信息。"
             )
 
+        if replied_context:
 
-        # ----------------------------------------------------
-        # 第五步：发送给 Agnes 多模态模型
-        # ----------------------------------------------------
+            user_prompt = (
+                replied_context
+                + "\n\n"
+                + "【用户的问题】\n"
+                + user_prompt
+            )
+
+        system_prompt = """
+你是一个 Telegram 图片分析助手。
+
+请用自然、清晰、简洁的中文回答。
+
+排版要求：
+1. 第一行可以使用一个合适的 emoji 标题。
+2. 内容分成 2-5 个自然段。
+3. 重要内容可以使用 **加粗**。
+4. 多项内容使用 • 项目符号。
+5. 不要使用 HTML。
+6. 不要把回答写成一整堵文字。
+7. 不要编造图片中看不到的信息。
+8. 如果无法确定，请明确说明。
+"""
 
         response = client.chat.completions.create(
 
             model=MODEL_NAME,
 
             messages=[
+
+                {
+                    "role": "system",
+                    "content": system_prompt
+                },
+
                 {
                     "role": "user",
 
@@ -240,68 +450,142 @@ async def analyze_image(
                             "image_url": {
                                 "url": image_url
                             }
-
                         }
 
                     ]
                 }
+
             ]
         )
 
-
-        # ----------------------------------------------------
-        # 第六步：读取结果
-        # ----------------------------------------------------
-
         if not response.choices:
 
-            reply = "AI 没有返回图片分析结果。"
+            reply = "❌ AI 没有返回图片分析结果。"
 
         else:
 
-            reply = response.choices[0].message.content
+            reply = (
+                response.choices[0]
+                .message
+                .content
+                or "❌ AI 返回了空结果。"
+            )
 
-            if not reply:
-                reply = "AI 返回了空的图片分析结果。"
+        reply = clean_ai_text(reply)
 
+        parts = split_long_text(reply)
 
-        # Telegram 单条消息长度限制
-        if len(reply) > 4000:
-
-            reply = reply[:3900] + "\n\n……内容过长，已截断。"
-
-
-        await context.bot.edit_message_text(
+        await context.bot.delete_message(
             chat_id=update.effective_chat.id,
-            message_id=processing_msg.message_id,
-            text=reply
+            message_id=processing_msg.message_id
         )
 
+        for part in parts:
+
+            await update.message.reply_text(
+                part,
+                parse_mode="Markdown"
+            )
+
+        print(
+            "[IMAGE] ✅ 图片分析完成",
+            flush=True
+        )
 
     except Exception as e:
 
-        print("=" * 60)
-        print("图片分析失败：")
-        print(repr(e))
-        print("=" * 60)
-
-        error_text = (
-            "❌ 图片分析失败\n\n"
-            f"{str(e)}"
+        print(
+            "[IMAGE] ❌ 图片分析失败：",
+            repr(e),
+            flush=True
         )
 
-        if len(error_text) > 4000:
-            error_text = error_text[:3900] + "\n……"
+        try:
 
-        await context.bot.edit_message_text(
-            chat_id=update.effective_chat.id,
-            message_id=processing_msg.message_id,
-            text=error_text
-        )
+            await context.bot.edit_message_text(
+
+                chat_id=update.effective_chat.id,
+
+                message_id=processing_msg.message_id,
+
+                text=(
+                    "❌ 图片分析失败\n\n"
+                    f"{str(e)}"
+                )
+            )
+
+        except Exception:
+
+            pass
 
 
 # ============================================================
-# 7. 普通消息处理
+# 11. AI 排版规则
+# ============================================================
+
+AI_SYSTEM_PROMPT = """
+你是一个高质量的 Telegram AI 助手。
+
+你的回答会直接发送到 Telegram。
+
+【排版规则，非常重要】
+
+请让回答具有良好的阅读体验，不要输出一整堵文字。
+
+规则：
+
+1. 开头可以使用一个合适的 emoji + 简短标题。
+例如：
+🤖 关于这个问题
+
+2. 正文必须分段。
+每个段落之间空一行。
+
+3. 重要结论使用：
+**加粗**
+
+4. 多个并列内容使用：
+• 第一项
+• 第二项
+• 第三项
+
+5. 如果需要步骤，使用：
+1. 第一步
+2. 第二步
+3. 第三步
+
+6. 如果有“结论”，可以使用：
+💡 **结论**
+然后单独写结论。
+
+7. 如果有提醒，可以使用：
+⚠️ **注意**
+
+8. 如果有代码：
+使用标准 Markdown 代码块。
+
+9. 不要使用 HTML 标签。
+
+10. 不要使用表格。
+Telegram 手机上表格通常很难阅读。
+
+11. 不要在回答开头写：
+“当然可以，以下是……”
+除非确实需要。
+
+12. 不要重复用户的问题。
+
+13. 如果用户只是简单问一句话，就不要强行写成超长文章。
+
+14. 根据问题复杂程度决定回答长度。
+
+15. 最重要的是：
+内容自然、清晰、像一个真正好用的 Telegram AI 助手。
+"""
+
+
+# ============================================================
+# 12. 普通消息
 # ============================================================
 
 async def handle_message(
@@ -312,13 +596,11 @@ async def handle_message(
     if not update.message:
         return
 
-
     chat = update.effective_chat
     user = update.effective_user
 
     if not user:
         return
-
 
     chat_id = chat.id
 
@@ -328,37 +610,17 @@ async def handle_message(
         or "Anonymous"
     )
 
-
-    # --------------------------------------------------------
-    # 获取机器人用户名
-    # --------------------------------------------------------
-
-    bot_username = await get_bot_username(context)
-
-
-    # --------------------------------------------------------
-    # 获取文本
-    # --------------------------------------------------------
-
-    text = (
-        update.message.text
-        or update.message.caption
-        or ""
+    bot_username = await get_bot_username(
+        context
     )
 
-
-    # --------------------------------------------------------
-    # 判断是否私聊
-    # --------------------------------------------------------
+    text = get_message_text(
+        update.message
+    )
 
     is_private = (
         chat.type == ChatType.PRIVATE
     )
-
-
-    # --------------------------------------------------------
-    # 判断是否 @机器人
-    # --------------------------------------------------------
 
     is_mentioned = False
 
@@ -369,17 +631,14 @@ async def handle_message(
             in text.lower()
         )
 
-
-    # --------------------------------------------------------
-    # 判断是否回复机器人
-    # --------------------------------------------------------
-
     is_reply_to_bot = False
 
     if update.message.reply_to_message:
 
         replied_user = (
-            update.message.reply_to_message.from_user
+            update.message
+            .reply_to_message
+            .from_user
         )
 
         if replied_user:
@@ -390,41 +649,49 @@ async def handle_message(
                 and replied_user.username.lower()
                 == bot_username.lower()
             ):
+
                 is_reply_to_bot = True
 
+    # --------------------------------------------------------
+    # 被回复内容
+    # --------------------------------------------------------
+
+    replied_context = get_replied_content(
+        update.message
+    )
+
+    if replied_context:
+
+        print(
+            "[REPLY] 检测到引用/回复内容",
+            flush=True
+        )
 
     # ========================================================
-    # A. 图片处理
+    # 图片
     # ========================================================
 
     target_photo = None
 
-
-    # 直接发送图片
     if update.message.photo:
 
-        target_photo = update.message.photo[-1]
+        target_photo = (
+            update.message.photo[-1]
+        )
 
-
-    # 回复一张图片
     elif (
         update.message.reply_to_message
         and update.message.reply_to_message.photo
     ):
 
         target_photo = (
-            update.message.reply_to_message.photo[-1]
+            update.message
+            .reply_to_message
+            .photo[-1]
         )
-
-
-        # 当前消息的文字作为问题
-        text = update.message.text or ""
-
 
     if target_photo:
 
-        # 私聊可以直接分析
-        # 群聊需要 @机器人、回复机器人，或者回复图片
         allowed = (
             is_private
             or is_mentioned
@@ -435,8 +702,6 @@ async def handle_message(
         if not allowed:
             return
 
-
-        # 去掉 @机器人
         user_prompt = text
 
         if bot_username:
@@ -446,30 +711,28 @@ async def handle_message(
                 ""
             )
 
-
         user_prompt = user_prompt.strip()
 
-
         await analyze_image(
+
             update,
             context,
             target_photo,
-            user_prompt
+            user_prompt,
+            replied_context
         )
 
         return
 
-
     # ========================================================
-    # B. 普通文字
+    # 普通文字
     # ========================================================
 
     if not text.strip():
         return
 
-
     # --------------------------------------------------------
-    # 记录群聊历史
+    # 群聊历史
     # --------------------------------------------------------
 
     if chat.type in (
@@ -490,14 +753,12 @@ async def handle_message(
 
             })
 
-
             if len(group_history[chat_id]) > MAX_HISTORY:
 
                 group_history[chat_id].pop(0)
 
-
     # --------------------------------------------------------
-    # 判断是否需要机器人回复
+    # 是否回答
     # --------------------------------------------------------
 
     if not (
@@ -505,11 +766,11 @@ async def handle_message(
         or is_mentioned
         or is_reply_to_bot
     ):
+
         return
 
-
     # --------------------------------------------------------
-    # 去掉 @机器人
+    # 清理 @机器人
     # --------------------------------------------------------
 
     prompt = text
@@ -521,90 +782,186 @@ async def handle_message(
             ""
         )
 
-
     prompt = prompt.strip()
-
 
     if not prompt:
         return
 
+    # ========================================================
+    # 构造问题
+    # ========================================================
+
+    if replied_context:
+
+        final_prompt = (
+            replied_context
+            + "\n\n"
+            + "【用户当前问题】\n"
+            + prompt
+        )
+
+    else:
+
+        final_prompt = prompt
 
     # ========================================================
-    # C. 联网搜索
+    # 联网搜索
     # ========================================================
 
     processing_msg = await update.message.reply_text(
-        "🔎 正在联网查询……"
+        "🔎 正在思考并查询资料…"
     )
-
 
     try:
 
-        search_results = search_web(prompt)
+        search_results = search_web(
+            prompt
+        )
 
+        # ----------------------------------------------------
+        # 最近聊天上下文
+        # ----------------------------------------------------
+
+        recent_history = []
+
+        if chat_id in group_history:
+
+            recent_messages = (
+                group_history[chat_id][-10:]
+            )
+
+            for item in recent_messages:
+
+                recent_history.append({
+
+                    "role": "user",
+
+                    "content": (
+                        f"{item['user']}: "
+                        f"{item['text']}"
+                    )
+                })
+
+        # ----------------------------------------------------
+        # 系统提示
+        # ----------------------------------------------------
 
         system_prompt = (
-            "你是一个智能 Telegram AI 助手。\n\n"
-
-            "用户的问题如下。\n"
-
-            "你可以参考联网搜索结果回答问题。\n\n"
-
-            "要求：\n"
-            "1. 优先保证事实准确。\n"
-            "2. 如果搜索结果不足以确定答案，要明确说明。\n"
-            "3. 不要声称自己知道搜索结果之外的信息。\n"
-            "4. 用自然、清晰的中文回答。\n"
-            "5. 不要使用 HTML 标签。\n\n"
-
-            "联网搜索结果：\n"
-            "--------------------\n"
-            f"{search_results}\n"
-            "--------------------"
+            AI_SYSTEM_PROMPT
+            + "\n\n"
+            + "你还需要遵守以下规则：\n"
+            + "• 如果存在【被回复消息】，"
+              "它就是用户当前问题的重要上下文。\n"
+            + "• 如果用户是在追问上一条消息，"
+              "请直接理解上下文，不要让用户重复粘贴。\n"
+            + "• 联网搜索结果只能作为参考。\n"
+            + "• 搜索结果不足时要明确说明。\n\n"
+            + "【联网搜索结果】\n"
+            + "--------------------\n"
+            + search_results
+            + "\n--------------------"
         )
 
+        print(
+            "[AI] 正在请求 Agnes...",
+            flush=True
+        )
 
         reply = ask_agnes(
-            prompt,
-            system_prompt
+
+            final_prompt,
+
+            system_prompt,
+
+            recent_history
         )
 
-
-        if len(reply) > 4000:
-
-            reply = reply[:3900] + "\n\n……内容过长，已截断。"
-
-
-        await context.bot.edit_message_text(
-            chat_id=chat_id,
-            message_id=processing_msg.message_id,
-            text=reply
+        reply = clean_ai_text(
+            reply
         )
 
+        parts = split_long_text(
+            reply
+        )
+
+        # 删除“正在思考”
+        try:
+
+            await context.bot.delete_message(
+
+                chat_id=chat_id,
+
+                message_id=processing_msg.message_id
+            )
+
+        except Exception:
+
+            pass
+
+        # ----------------------------------------------------
+        # 发送最终回答
+        # ----------------------------------------------------
+
+        for index, part in enumerate(parts):
+
+            try:
+
+                await update.message.reply_text(
+                    part,
+                    parse_mode="Markdown"
+                )
+
+            except Exception as markdown_error:
+
+                print(
+                    "[FORMAT] Markdown 解析失败，"
+                    "自动切换纯文本：",
+                    repr(markdown_error),
+                    flush=True
+                )
+
+                await update.message.reply_text(
+                    part
+                )
+
+        print(
+            "[AI] ✅ 回复完成",
+            flush=True
+        )
 
     except Exception as e:
 
-        print("=" * 60)
-        print("AI 请求失败：")
-        print(repr(e))
-        print("=" * 60)
+        print("=" * 60, flush=True)
 
-
-        await context.bot.edit_message_text(
-
-            chat_id=chat_id,
-
-            message_id=processing_msg.message_id,
-
-            text=(
-                "❌ 请求失败\n\n"
-                f"{str(e)}"
-            )
+        print(
+            "[AI] ❌ 请求失败：",
+            repr(e),
+            flush=True
         )
+
+        print("=" * 60, flush=True)
+
+        try:
+
+            await context.bot.edit_message_text(
+
+                chat_id=chat_id,
+
+                message_id=processing_msg.message_id,
+
+                text=(
+                    "❌ 请求失败\n\n"
+                    f"{str(e)}"
+                )
+            )
+
+        except Exception:
+
+            pass
 
 
 # ============================================================
-# 8. /summary 群聊总结
+# 13. /summary
 # ============================================================
 
 async def handle_summary(
@@ -615,38 +972,29 @@ async def handle_summary(
     if not update.message:
         return
 
-
     chat = update.effective_chat
 
     chat_id = chat.id
-
 
     history = group_history.get(
         chat_id,
         []
     )
 
-
-    # --------------------------------------------------------
-    # 消息数量检查
-    # --------------------------------------------------------
-
     if len(history) < 3:
 
         await update.message.reply_text(
-            "📝 目前记录太少，至少需要 3 条消息才能进行总结。"
+            "📝 目前记录太少，至少需要 3 条消息才能生成总结。"
         )
 
         return
 
-
     status_msg = await update.message.reply_text(
-        "📝 正在生成群聊总结……"
+        "📝 正在整理群聊内容…"
     )
 
-
     # --------------------------------------------------------
-    # 创建消息链接
+    # 群链接
     # --------------------------------------------------------
 
     if chat.username:
@@ -660,22 +1008,22 @@ async def handle_summary(
         cid = str(chat_id)
 
         if cid.startswith("-100"):
+
             cid = cid[4:]
 
         else:
+
             cid = cid.replace("-", "")
 
         chat_link_prefix = (
             f"https://t.me/c/{cid}"
         )
 
-
     # --------------------------------------------------------
-    # 格式化历史
+    # 历史
     # --------------------------------------------------------
 
     formatted_lines = []
-
 
     for index, item in enumerate(
         history,
@@ -695,44 +1043,46 @@ async def handle_summary(
 
         )
 
-
     formatted_history = "\n\n".join(
         formatted_lines
     )
 
+    system_prompt = """
+你是 Telegram 群聊总结助手。
 
-    # --------------------------------------------------------
-    # 让 AI 总结
-    # --------------------------------------------------------
+请根据聊天记录制作一个简洁、漂亮、容易阅读的总结。
 
-    system_prompt = (
-        "你是一个群聊总结助手。\n\n"
+排版严格遵循：
 
-        "请根据聊天记录总结最近的讨论内容。\n\n"
+📝 **群聊 AI 总结**
 
-        "要求：\n"
-        "1. 找出 3-5 个主要话题。\n"
-        "2. 每个话题用简短的一两句话说明。\n"
-        "3. 不要编造聊天记录中不存在的内容。\n"
-        "4. 如果某个话题明显没有讨论，不要硬凑。\n"
-        "5. 输出纯文本，不要使用 Markdown。\n\n"
+💬 **本次分析**
+分析最近的主要讨论。
 
-        "输出格式严格如下：\n\n"
+🔥 **主要话题**
 
-        "📝 群聊 AI 总结\n"
-        f"💬 已分析 {len(history)} 条消息\n\n"
+1. **话题名称**
+简要说明这个话题讨论了什么。
 
-        "1. 话题名称\n"
-        "内容描述\n"
-        "相关消息：消息编号\n\n"
+2. **话题名称**
+简要说明。
 
-        "2. 话题名称\n"
-        "内容描述\n"
-        "相关消息：消息编号\n\n"
+3. **话题名称**
+简要说明。
 
-        "最后一句：点击下方消息链接可查看原消息。"
-    )
+💡 **总结**
+用一两句话概括整个聊天。
 
+要求：
+
+• 不要编造聊天记录。
+• 最多总结 5 个话题。
+• 没有意义的闲聊可以忽略。
+• 不要输出 HTML。
+• 不要使用表格。
+• 使用自然中文。
+• 不要把每一条消息都重复一遍。
+"""
 
     try:
 
@@ -750,7 +1100,7 @@ async def handle_summary(
                 {
                     "role": "user",
                     "content": (
-                        "以下是聊天记录：\n\n"
+                        "聊天记录如下：\n\n"
                         + formatted_history
                     )
                 }
@@ -758,32 +1108,28 @@ async def handle_summary(
             ]
         )
 
-
         if not response.choices:
 
             raise RuntimeError(
                 "AI 没有返回总结。"
             )
 
+        result = (
+            response.choices[0]
+            .message
+            .content
+            or ""
+        )
 
-        result = response.choices[0].message.content
-
-
-        if not result:
-
-            raise RuntimeError(
-                "AI 返回了空总结。"
-            )
-
+        result = clean_ai_text(
+            result
+        )
 
         # ----------------------------------------------------
-        # 给总结最后附上消息链接
+        # 消息链接
         # ----------------------------------------------------
 
         links = []
-
-        # 这里不让 AI 直接生成 HTML，
-        # 防止 HTML 格式错误导致 Telegram 拒绝消息。
 
         for index, item in enumerate(
             history,
@@ -795,65 +1141,83 @@ async def handle_summary(
             )
 
             links.append(
-                f"{index}. {msg_link}"
+                f"• 消息 {index}：{msg_link}"
             )
-
 
         final_text = (
             result
             + "\n\n"
-            + "🔗 相关消息链接：\n"
+            + "🔗 **相关消息**\n"
             + "\n".join(links)
         )
 
-
-        if len(final_text) > 4000:
-
-            final_text = final_text[:3900] + (
-                "\n\n……总结过长，已截断。"
-            )
-
-
-        await context.bot.edit_message_text(
-
-            chat_id=chat_id,
-
-            message_id=status_msg.message_id,
-
-            text=final_text
+        parts = split_long_text(
+            final_text
         )
 
+        try:
+
+            await context.bot.delete_message(
+
+                chat_id=chat_id,
+
+                message_id=status_msg.message_id
+            )
+
+        except Exception:
+
+            pass
+
+        for part in parts:
+
+            try:
+
+                await update.message.reply_text(
+                    part,
+                    parse_mode="Markdown"
+                )
+
+            except Exception:
+
+                await update.message.reply_text(
+                    part
+                )
 
     except Exception as e:
 
-        print("=" * 60)
-        print("群聊总结失败：")
-        print(repr(e))
-        print("=" * 60)
-
-
-        await context.bot.edit_message_text(
-
-            chat_id=chat_id,
-
-            message_id=status_msg.message_id,
-
-            text=(
-                "❌ 群聊总结失败\n\n"
-                f"{str(e)}"
-            )
+        print(
+            "[SUMMARY] ❌ 总结失败：",
+            repr(e),
+            flush=True
         )
+
+        try:
+
+            await context.bot.edit_message_text(
+
+                chat_id=chat_id,
+
+                message_id=status_msg.message_id,
+
+                text=(
+                    "❌ 群聊总结失败\n\n"
+                    f"{str(e)}"
+                )
+            )
+
+        except Exception:
+
+            pass
 
 
 # ============================================================
-# 9. 注册所有 Handler
+# 14. 注册 Handler
 # ============================================================
 
 def register_handlers(
     application: Application
 ):
 
-    # /summary
     application.add_handler(
         CommandHandler(
             "summary",
@@ -861,13 +1225,15 @@ def register_handlers(
         )
     )
 
-
-    # 普通消息、图片、回复
     application.add_handler(
 
         MessageHandler(
             filters.ALL,
             handle_message
         )
+    )
 
-        )
+    print(
+        "[HANDLER] Telegram handlers 注册完成",
+        flush=True
+    )
