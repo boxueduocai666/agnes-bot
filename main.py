@@ -18,23 +18,27 @@ AGNES_API_KEY = os.environ.get("AGNES_API_KEY")
 
 RENDER_EXTERNAL_URL = os.environ.get("RENDER_EXTERNAL_URL")
 WEBHOOK_URL = os.environ.get("WEBHOOK_URL")
-
 WEBHOOK_SECRET = os.environ.get("WEBHOOK_SECRET", "")
 
 
 if not TELEGRAM_TOKEN:
-    raise RuntimeError("❌ 未检测到 TELEGRAM_TOKEN")
+    raise RuntimeError(
+        "❌ 未检测到 TELEGRAM_TOKEN，请在 Render → Environment 配置。"
+    )
 
 if not AGNES_API_KEY:
-    raise RuntimeError("❌ 未检测到 AGNES_API_KEY")
+    raise RuntimeError(
+        "❌ 未检测到 AGNES_API_KEY，请在 Render → Environment 配置。"
+    )
 
 
-# 自动生成 Webhook 地址
+# 如果没有手动设置 WEBHOOK_URL，
+# 自动使用 Render 提供的 RENDER_EXTERNAL_URL
 if not WEBHOOK_URL:
 
     if not RENDER_EXTERNAL_URL:
         raise RuntimeError(
-            "❌ 未检测到 WEBHOOK_URL 或 RENDER_EXTERNAL_URL"
+            "❌ 未找到 WEBHOOK_URL 或 RENDER_EXTERNAL_URL。"
         )
 
     WEBHOOK_URL = f"{RENDER_EXTERNAL_URL}/webhook"
@@ -64,7 +68,7 @@ def health():
 # 3. Telegram Application
 # ============================================================
 
-print("🔵 正在创建 Telegram Application...")
+print("[START] 正在创建 Telegram Application...", flush=True)
 
 telegram_app = (
     Application.builder()
@@ -72,19 +76,22 @@ telegram_app = (
     .build()
 )
 
-print("🟢 Telegram Application 创建成功")
-
-
-# 注册消息处理器
-print("🔵 正在注册 Telegram handlers...")
-
-register_handlers(telegram_app)
-
-print("🟢 Telegram handlers 注册成功")
+print("[OK] Telegram Application 创建成功", flush=True)
 
 
 # ============================================================
-# 4. Telegram asyncio
+# 4. 注册 Telegram handlers
+# ============================================================
+
+print("[START] 正在注册 Telegram handlers...", flush=True)
+
+register_handlers(telegram_app)
+
+print("[OK] Telegram handlers 注册成功", flush=True)
+
+
+# ============================================================
+# 5. Telegram asyncio
 # ============================================================
 
 telegram_loop = asyncio.new_event_loop()
@@ -92,58 +99,160 @@ telegram_loop = asyncio.new_event_loop()
 
 async def start_telegram():
 
-    print("🔵 Telegram 后台初始化开始")
+    print("=" * 60, flush=True)
+    print("[TG 1/6] Telegram 初始化开始", flush=True)
 
     try:
 
+        # ----------------------------------------------------
         # 初始化
+        # ----------------------------------------------------
+
         await telegram_app.initialize()
 
-        print("🟢 Telegram Application 初始化成功")
+        print(
+            "[TG 2/6] Telegram initialize() 成功",
+            flush=True
+        )
 
+        # ----------------------------------------------------
         # 启动 Application
+        # ----------------------------------------------------
+
         await telegram_app.start()
 
-        print("🟢 Telegram Application 启动成功")
+        print(
+            "[TG 3/6] Telegram start() 成功",
+            flush=True
+        )
 
+        # ----------------------------------------------------
         # 设置 Webhook
-        print("🔵 正在设置 Telegram Webhook...")
-        print(f"🔗 Webhook URL: {WEBHOOK_URL}")
+        # ----------------------------------------------------
+
+        print(
+            "[TG 4/6] 正在设置 Telegram Webhook...",
+            flush=True
+        )
+
+        print(
+            f"[TG] Webhook URL = {WEBHOOK_URL}",
+            flush=True
+        )
+
+        if WEBHOOK_SECRET:
+            print(
+                "[TG] Webhook Secret = 已配置",
+                flush=True
+            )
+        else:
+            print(
+                "[TG] Webhook Secret = 未配置",
+                flush=True
+            )
 
         await telegram_app.bot.set_webhook(
             url=WEBHOOK_URL,
-            secret_token=WEBHOOK_SECRET if WEBHOOK_SECRET else None,
+            secret_token=(
+                WEBHOOK_SECRET
+                if WEBHOOK_SECRET
+                else None
+            ),
             drop_pending_updates=False
         )
 
-        print("🟢 Telegram Webhook 设置成功")
+        print(
+            "[TG 5/6] ✅ Telegram Webhook 设置成功",
+            flush=True
+        )
 
-        # 获取 Webhook 状态
-        webhook_info = await telegram_app.bot.get_webhook_info()
+        # ----------------------------------------------------
+        # 获取 Webhook 当前状态
+        # ----------------------------------------------------
 
-        print("=" * 60)
-        print("🎉 Telegram Bot 已成功启动")
-        print(f"Webhook: {WEBHOOK_URL}")
-        print(f"Webhook 当前地址: {webhook_info.url}")
-        print(f"Pending updates: {webhook_info.pending_update_count}")
-        print("=" * 60)
+        webhook_info = (
+            await telegram_app.bot.get_webhook_info()
+        )
 
-        # 永久运行
+        print(
+            "[TG 6/6] ✅ Webhook 当前状态",
+            flush=True
+        )
+
+        print(
+            f"[TG] 当前 Webhook URL: {webhook_info.url}",
+            flush=True
+        )
+
+        print(
+            f"[TG] Pending updates: "
+            f"{webhook_info.pending_update_count}",
+            flush=True
+        )
+
+        print(
+            f"[TG] Last error date: "
+            f"{webhook_info.last_error_date}",
+            flush=True
+        )
+
+        print(
+            f"[TG] Last error message: "
+            f"{webhook_info.last_error_message}",
+            flush=True
+        )
+
+        print("=" * 60, flush=True)
+
+        print(
+            "🎉 Telegram Bot Webhook 启动完成！",
+            flush=True
+        )
+
+        print(
+            f"Webhook: {WEBHOOK_URL}",
+            flush=True
+        )
+
+        print("=" * 60, flush=True)
+
+        # 永久保持 asyncio 事件循环
         await asyncio.Event().wait()
 
     except Exception as e:
 
-        print("=" * 60)
-        print("❌ Telegram 后台启动失败")
-        print(repr(e))
-        print("=" * 60)
+        print("=" * 60, flush=True)
+
+        print(
+            "❌ Telegram 后台启动失败",
+            flush=True
+        )
+
+        print(
+            f"错误类型: {type(e).__name__}",
+            flush=True
+        )
+
+        print(
+            f"错误内容: {e}",
+            flush=True
+        )
+
+        print("=" * 60, flush=True)
 
         raise
 
 
+# ============================================================
+# 6. Telegram 后台线程
+# ============================================================
+
 def telegram_thread_target():
 
-    print("🔵 正在启动 Telegram 后台线程...")
+    print(
+        "[THREAD] 正在启动 Telegram 后台线程...",
+        flush=True
+    )
 
     asyncio.set_event_loop(telegram_loop)
 
@@ -155,22 +264,42 @@ def telegram_thread_target():
 
     except Exception as e:
 
-        print("=" * 60)
-        print("❌ Telegram 后台线程发生错误")
-        print(repr(e))
-        print("=" * 60)
+        print("=" * 60, flush=True)
+
+        print(
+            "❌ Telegram 后台线程发生错误",
+            flush=True
+        )
+
+        print(
+            f"错误类型: {type(e).__name__}",
+            flush=True
+        )
+
+        print(
+            f"错误内容: {e}",
+            flush=True
+        )
+
+        print("=" * 60, flush=True)
 
 
 # ============================================================
-# 5. Webhook
+# 7. Telegram Webhook 接收接口
 # ============================================================
 
 @app.route("/webhook", methods=["POST"])
 def telegram_webhook():
 
-    print("📩 收到 Telegram Webhook")
+    print(
+        "[WEBHOOK] 📩 收到 Telegram 请求",
+        flush=True
+    )
 
-    # 验证 Secret
+    # --------------------------------------------------------
+    # Secret 验证
+    # --------------------------------------------------------
+
     if WEBHOOK_SECRET:
 
         received_secret = request.headers.get(
@@ -179,29 +308,52 @@ def telegram_webhook():
 
         if received_secret != WEBHOOK_SECRET:
 
-            print("❌ Webhook Secret 验证失败")
+            print(
+                "[WEBHOOK] ❌ Secret 验证失败",
+                flush=True
+            )
 
             return jsonify({
                 "ok": False,
                 "error": "Unauthorized"
             }), 403
 
+        print(
+            "[WEBHOOK] ✅ Secret 验证成功",
+            flush=True
+        )
+
+    # --------------------------------------------------------
+    # 读取 Telegram Update
+    # --------------------------------------------------------
+
     try:
 
         data = request.get_json(force=True)
+
+        print(
+            "[WEBHOOK] ✅ 收到 Telegram Update",
+            flush=True
+        )
 
         update = Update.de_json(
             data,
             telegram_app.bot
         )
 
-        # 将 Telegram 更新交给 asyncio
+        # ----------------------------------------------------
+        # 交给 Telegram Application 处理
+        # ----------------------------------------------------
+
         asyncio.run_coroutine_threadsafe(
             telegram_app.process_update(update),
             telegram_loop
         )
 
-        print("🟢 Telegram Update 已提交处理")
+        print(
+            "[WEBHOOK] ✅ Update 已提交给 Telegram Application",
+            flush=True
+        )
 
         return jsonify({
             "ok": True
@@ -209,8 +361,20 @@ def telegram_webhook():
 
     except Exception as e:
 
-        print("❌ Webhook 处理失败")
-        print(repr(e))
+        print(
+            "[WEBHOOK] ❌ Webhook 处理失败",
+            flush=True
+        )
+
+        print(
+            f"[WEBHOOK] 错误类型: {type(e).__name__}",
+            flush=True
+        )
+
+        print(
+            f"[WEBHOOK] 错误内容: {e}",
+            flush=True
+        )
 
         return jsonify({
             "ok": False,
@@ -219,16 +383,24 @@ def telegram_webhook():
 
 
 # ============================================================
-# 6. 启动 Flask + Telegram
+# 8. 启动 Flask + Telegram
 # ============================================================
 
 if __name__ == "__main__":
 
-    print("=" * 60)
-    print("🚀 Agnes Telegram Bot 正在启动")
-    print("=" * 60)
+    print("=" * 60, flush=True)
 
+    print(
+        "🚀 Agnes Telegram Bot 正在启动",
+        flush=True
+    )
+
+    print("=" * 60, flush=True)
+
+    # --------------------------------------------------------
     # 启动 Telegram 后台线程
+    # --------------------------------------------------------
+
     telegram_thread = threading.Thread(
         target=telegram_thread_target,
         daemon=True
@@ -236,19 +408,38 @@ if __name__ == "__main__":
 
     telegram_thread.start()
 
-    print("🟢 Telegram 后台线程已启动")
+    print(
+        "[THREAD] ✅ Telegram 后台线程已启动",
+        flush=True
+    )
 
+    # --------------------------------------------------------
     # Render PORT
+    # --------------------------------------------------------
+
     port = int(
         os.environ.get("PORT", 10000)
     )
 
-    print(f"🌐 Flask Web 服务启动，端口: {port}")
-    print(f"🌐 Webhook 地址: {WEBHOOK_URL}")
+    print(
+        f"[FLASK] Web 服务端口: {port}",
+        flush=True
+    )
+
+    print(
+        f"[FLASK] Webhook 地址: {WEBHOOK_URL}",
+        flush=True
+    )
+
+    print("=" * 60, flush=True)
+
+    # --------------------------------------------------------
+    # 启动 Flask
+    # --------------------------------------------------------
 
     app.run(
         host="0.0.0.0",
         port=port,
         debug=False,
         use_reloader=False
-        )
+            )
