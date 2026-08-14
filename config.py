@@ -54,10 +54,10 @@ CHAT_MODELS = {
 # 图片理解模型
 # ============================================================
 
-IMAGE_MODEL = "agnes-2.5-flash"
+IMAGE_MODEL = "agnes-2.0-flash"
 
 
-IMAGE_MODEL_NAME = "Agnes-2.5-Flash"
+IMAGE_MODEL_NAME = "Agnes-2.0-Flash"
 
 
 # ============================================================
