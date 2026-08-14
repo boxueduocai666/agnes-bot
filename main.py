@@ -1,21 +1,23 @@
 import os
 import threading
+
 from flask import Flask
+
 from telegram.ext import (
     Application,
     CommandHandler,
     MessageHandler,
-    filters,
+    filters
 )
 
 from bot_logic import (
     handle_message,
-    handle_summary,
-    handle_start,
+    handle_summary
 )
 
+
 # ============================================================
-# 1. Flask Web Server
+# Flask Web 服务
 # ============================================================
 
 app = Flask(__name__)
@@ -23,16 +25,18 @@ app = Flask(__name__)
 
 @app.route("/")
 def home():
+
     return "Agnes Bot is running smoothly!"
 
 
-@app.route("/health")
-def health():
-    return "OK"
-
-
 def run_web_server():
-    port = int(os.environ.get("PORT", 10000))
+
+    port = int(
+        os.environ.get(
+            "PORT",
+            10000
+        )
+    )
 
     app.run(
         host="0.0.0.0",
@@ -41,50 +45,35 @@ def run_web_server():
 
 
 # ============================================================
-# 2. Telegram Bot
+# Telegram Bot
 # ============================================================
 
-def main():
-    token = os.environ.get("TELEGRAM_TOKEN")
+BOT_TOKEN = os.environ.get(
+    "TELEGRAM_TOKEN"
+)
 
-    if not token:
-        raise RuntimeError(
-            "未检测到 TELEGRAM_TOKEN，请在 Render 的 Environment Variables 中配置。"
-        )
 
-    # --------------------------------------------------------
-    # Render Web Service 需要 HTTP 服务
-    # 所以在后台线程启动 Flask
-    # --------------------------------------------------------
+if not BOT_TOKEN:
 
-    web_thread = threading.Thread(
-        target=run_web_server,
-        daemon=True
+    raise RuntimeError(
+        "未检测到 TELEGRAM_TOKEN，请在 Render 的 Environment Variables 中配置。"
     )
 
-    web_thread.start()
 
-    # --------------------------------------------------------
-    # 创建 Telegram Application
-    # 使用 python-telegram-bot
-    # --------------------------------------------------------
+# ============================================================
+# 主程序
+# ============================================================
+
+async def main():
+
+    print("🤖 Agnes Bot 正在启动……")
 
     application = (
         Application.builder()
-        .token(token)
+        .token(BOT_TOKEN)
         .build()
     )
 
-    # --------------------------------------------------------
-    # /start
-    # --------------------------------------------------------
-
-    application.add_handler(
-        CommandHandler(
-            "start",
-            handle_start
-        )
-    )
 
     # --------------------------------------------------------
     # /summary
@@ -97,33 +86,63 @@ def main():
         )
     )
 
+
     # --------------------------------------------------------
     # 普通文字 + 图片
     # --------------------------------------------------------
 
     application.add_handler(
+
         MessageHandler(
-            filters.TEXT | filters.PHOTO,
+            (
+                filters.TEXT
+                | filters.PHOTO
+            )
+            & ~filters.COMMAND,
+
             handle_message
         )
+
     )
 
-    print("========================================")
-    print("Agnes Bot 正在启动...")
-    print("Telegram Bot: OK")
-    print("Flask Server: OK")
-    print("========================================")
+
+    print("✅ Telegram Bot 已启动。")
+
 
     # --------------------------------------------------------
-    # 启动 Telegram 长轮询
+    # 启动轮询
     # --------------------------------------------------------
 
-    application.run_polling()
+    await application.initialize()
+
+    await application.start()
+
+    await application.updater.start_polling()
+
+
+    # 保持程序运行
+
+    import asyncio
+
+    while True:
+
+        await asyncio.sleep(3600)
 
 
 # ============================================================
-# 3. 程序入口
+# 程序入口
 # ============================================================
 
 if __name__ == "__main__":
-    main()
+
+    import asyncio
+
+    # Flask 后台线程
+    threading.Thread(
+        target=run_web_server,
+        daemon=True
+    ).start()
+
+
+    # Telegram Bot
+    asyncio.run(main())
