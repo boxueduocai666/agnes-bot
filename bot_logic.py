@@ -166,18 +166,23 @@ def build_quote_context(message):
 
     text = quote["text"].strip()
 
+
     if not text:
 
         if quote["has_photo"]:
+
             text = "[这是一条图片消息，图片本身未提供文字内容。]"
 
         elif quote["has_document"]:
+
             text = "[这是一条文件消息。]"
 
         elif quote["has_video"]:
+
             text = "[这是一条视频消息。]"
 
         else:
+
             text = "[该消息没有文字内容。]"
 
 
@@ -213,6 +218,7 @@ def search_web(query: str) -> str:
 
         results = []
 
+
         with DDGS() as ddgs:
 
             for r in ddgs.text(
@@ -237,6 +243,7 @@ def search_web(query: str) -> str:
             body = r.get("body", "")
             href = r.get("href", "")
 
+
             output.append(
                 f"- {title}\n"
                 f"  {body}\n"
@@ -253,6 +260,7 @@ def search_web(query: str) -> str:
         print("[SEARCH] 联网搜索失败")
         print(repr(e))
         print("=" * 60)
+
 
         return f"联网搜索失败：{e}"
 
@@ -284,8 +292,11 @@ def ask_agnes(
 
 
     response = client.chat.completions.create(
+
         model=MODEL_NAME,
+
         messages=messages
+
     )
 
 
@@ -324,6 +335,7 @@ def format_ai_reply(text):
     """
 
     if not text:
+
         return "AI 没有返回内容。"
 
 
@@ -459,11 +471,17 @@ async def edit_ai_message(
     try:
 
         await context.bot.edit_message_text(
+
             chat_id=chat_id,
+
             message_id=message_id,
+
             text=formatted,
+
             parse_mode="HTML",
+
             disable_web_page_preview=True
+
         )
 
 
@@ -485,10 +503,15 @@ async def edit_ai_message(
 
 
         await context.bot.edit_message_text(
+
             chat_id=chat_id,
+
             message_id=message_id,
+
             text=plain_text[:4000],
+
             disable_web_page_preview=True
+
         )
 
 
@@ -604,9 +627,11 @@ async def analyze_image(
                         }
 
                     ]
+
                 }
 
             ]
+
         )
 
 
@@ -618,16 +643,22 @@ async def analyze_image(
 
             reply = response.choices[0].message.content
 
+
             if not reply:
 
                 reply = "AI 返回了空的图片分析结果。"
 
 
         await edit_ai_message(
+
             context,
+
             update.effective_chat.id,
+
             processing_msg.message_id,
+
             reply
+
         )
 
 
@@ -649,6 +680,7 @@ async def analyze_image(
                 "❌ 图片分析失败\n\n"
                 f"{str(e)}"
             )
+
         )
 
 
@@ -662,14 +694,17 @@ async def handle_message(
 ):
 
     if not update.message:
+
         return
 
 
     chat = update.effective_chat
+
     user = update.effective_user
 
 
     if not user:
+
         return
 
 
@@ -687,7 +722,9 @@ async def handle_message(
     # 获取机器人用户名
     # --------------------------------------------------------
 
-    bot_username = await get_bot_username(context)
+    bot_username = await get_bot_username(
+        context
+    )
 
 
     # --------------------------------------------------------
@@ -733,7 +770,7 @@ async def handle_message(
 
 
     # --------------------------------------------------------
-    # 是否回复机器人
+    # 是否回复机器人自己的消息
     # --------------------------------------------------------
 
     is_reply_to_bot = False
@@ -751,8 +788,14 @@ async def handle_message(
             if (
 
                 replied_user.username
-                and bot_username
-                and replied_user.username.lower()
+
+                and
+
+                bot_username
+
+                and
+
+                replied_user.username.lower()
                 == bot_username.lower()
 
             ):
@@ -781,7 +824,10 @@ async def handle_message(
     elif (
 
         update.message.reply_to_message
-        and update.message.reply_to_message.photo
+
+        and
+
+        update.message.reply_to_message.photo
 
     ):
 
@@ -794,19 +840,33 @@ async def handle_message(
 
         # ----------------------------------------------------
         # 图片触发规则：
-        # 私聊 / @机器人 / 回复机器人自己的消息
-        # 才触发；回复其他人的消息不会触发。
+        #
+        # 私聊
+        # @机器人
+        # 回复机器人自己的消息
+        #
+        # 才触发。
+        #
+        # 回复其他人的图片不会触发。
         # ----------------------------------------------------
 
         allowed = (
 
             is_private
-            or is_mentioned
-            or is_reply_to_bot
+
+            or
+
+            is_mentioned
+
+            or
+
+            is_reply_to_bot
+
         )
 
 
         if not allowed:
+
             return
 
 
@@ -825,10 +885,15 @@ async def handle_message(
 
 
         await analyze_image(
+
             update,
+
             context,
+
             target_photo,
+
             user_prompt
+
         )
 
 
@@ -840,6 +905,7 @@ async def handle_message(
     # ========================================================
 
     if not text.strip():
+
         return
 
 
@@ -850,6 +916,7 @@ async def handle_message(
     if chat.type in (
 
         ChatType.GROUP,
+
         ChatType.SUPERGROUP
 
     ):
@@ -874,19 +941,28 @@ async def handle_message(
 
 
     # --------------------------------------------------------
-    # 只有以下情况才触发机器人：
-    # 1. 私聊
-    # 2. @机器人
-    # 3. 回复机器人自己的消息
+    # 关键触发规则：
     #
-    # 回复其他人的消息不会触发机器人。
+    # 私聊
+    # @机器人
+    # 回复机器人自己的消息
+    #
+    # 才触发 AI。
+    #
+    # 回复群里其他人的消息不会触发。
     # --------------------------------------------------------
 
     if not (
 
         is_private
-        or is_mentioned
-        or is_reply_to_bot
+
+        or
+
+        is_mentioned
+
+        or
+
+        is_reply_to_bot
 
     ):
 
@@ -912,7 +988,7 @@ async def handle_message(
 
 
     # --------------------------------------------------------
-    # 如果用户只是回复了一条消息，
+    # 如果用户只是回复一条机器人消息，
     # 没有输入问题
     # --------------------------------------------------------
 
@@ -957,26 +1033,26 @@ async def handle_message(
 
             "请严格遵守以下排版要求：\n\n"
 
-            "1. 使用自然、清晰的中文。\n"
+            "1. 使用自然、清晰的中文。\n\n"
 
-            "2. 不要输出 HTML 标签。\n"
+            "2. 不要输出 HTML 标签。\n\n"
 
-            "3. 可以使用 Markdown，例如 **加粗**。\n"
+            "3. 可以使用 Markdown，例如 **加粗**。\n\n"
 
-            "4. 重要结论可以加粗。\n"
+            "4. 重要结论可以加粗。\n\n"
 
             "5. 使用 emoji 作为小标题，例如：\n"
             "💡 核心观点\n"
             "📌 具体原因\n"
             "🔍 进一步分析\n\n"
 
-            "6. 不要把所有内容挤成一大段。\n"
+            "6. 不要把所有内容挤成一大段。\n\n"
 
-            "7. 每个主要观点之间留一个空行。\n"
+            "7. 每个主要观点之间留一个空行。\n\n"
 
-            "8. 列表使用 - 或 1. 2. 3.。\n"
+            "8. 列表使用 - 或 1. 2. 3.。\n\n"
 
-            "9. 如果问题比较简单，直接回答，不要故意写得很长。\n"
+            "9. 如果问题比较简单，直接回答，不要故意写得很长。\n\n"
 
             "10. 如果用户是在询问被引用的消息，"
             "必须结合【用户引用的消息】回答。\n\n"
@@ -1022,9 +1098,11 @@ async def handle_message(
         print(f"[AI] 用户：{user_name}")
         print(f"[AI] 问题：{prompt}")
 
+
         if quote_context:
 
             print("[AI] 本次问题包含引用消息")
+
 
         print("=" * 60)
 
@@ -1091,6 +1169,7 @@ async def handle_summary(
 ):
 
     if not update.message:
+
         return
 
 
@@ -1100,38 +1179,48 @@ async def handle_summary(
 
 
     history = group_history.get(
+
         chat_id,
+
         []
+
     )
 
 
     if len(history) < 3:
 
         await update.message.reply_text(
+
             "📝 目前记录太少，至少需要 3 条消息才能进行总结。"
+
         )
 
         return
 
 
     status_msg = await update.message.reply_text(
+
         "📝 正在生成群聊总结……"
+
     )
 
 
     # --------------------------------------------------------
-    # 创建消息链接
+    # 创建 Telegram 消息链接
     # --------------------------------------------------------
 
     if chat.username:
 
         chat_link_prefix = (
+
             f"https://t.me/{chat.username}"
+
         )
 
     else:
 
         cid = str(chat_id)
+
 
         if cid.startswith("-100"):
 
@@ -1141,40 +1230,46 @@ async def handle_summary(
 
             cid = cid.replace("-", "")
 
+
         chat_link_prefix = (
+
             f"https://t.me/c/{cid}"
+
         )
 
 
     # --------------------------------------------------------
-    # 格式化历史
+    # 给 AI 的聊天记录
+    #
+    # 每条消息都有唯一 MSG 编号。
+    #
+    # AI 必须为每个话题选择一条最相关的消息。
     # --------------------------------------------------------
 
     formatted_lines = []
 
 
     for index, item in enumerate(
+
         history,
+
         start=1
+
     ):
-
-        msg_link = (
-            f"{chat_link_prefix}/{item['message_id']}"
-        )
-
 
         formatted_lines.append(
 
-            f"[消息 {index}]\n"
+            f"[MSG:{index}]\n"
             f"用户：{item['user']}\n"
-            f"内容：{item['text']}\n"
-            f"链接：{msg_link}"
+            f"内容：{item['text']}"
 
         )
 
 
     formatted_history = "\n\n".join(
+
         formatted_lines
+
     )
 
 
@@ -1202,28 +1297,64 @@ async def handle_summary(
 
         "6. 重要内容可以使用 **加粗**。\n"
 
-        "7. 使用 emoji 小标题。\n"
+        "7. 使用 emoji 小标题。\n\n"
 
-        "8. 不要使用 HTML。\n"
+        "8. 每个主要话题必须使用以下格式：\n"
 
-        "9. 不要在总结正文中输出聊天消息的完整 URL；相关消息链接由机器人统一添加。\n\n"
-        "推荐格式：\n\n"
+        "[TOPIC:话题标题|MSG:消息编号]\n"
+
+        "然后下一行写该话题的总结内容。\n\n"
+
+        "例如：\n"
+
+        "[TOPIC:澎湃4系统体验讨论|MSG:3]\n"
+
+        "用户讨论了澎湃4的流畅度和动画效果……\n\n"
+
+        "[TOPIC:版本升级门槛问题|MSG:7]\n"
+
+        "用户讨论了系统升级限制……\n\n"
+
+        "9. MSG 必须是聊天记录中真实存在的 MSG 编号。\n"
+
+        "10. 每个话题只选择一条最有代表性的消息。\n"
+
+        "11. 不要输出任何完整 URL。\n"
+
+        "12. 不要生成“🔗 相关消息”区域。\n"
+
+        "13. 不要在最后重复列出消息编号。\n"
+
+        "14. 最后使用：\n"
+
+        "💡 **总体结论**\n"
+
+        "然后给出整体总结。\n\n"
+
+        "推荐结构：\n"
 
         "📝 **群聊 AI 总结**\n\n"
 
-        "📌 **话题一**\n"
-        "简要说明……\n\n"
+        "[TOPIC:话题一|MSG:3]\n"
 
-        "📌 **话题二**\n"
-        "简要说明……\n\n"
+        "话题一内容……\n\n"
+
+        "[TOPIC:话题二|MSG:8]\n"
+
+        "话题二内容……\n\n"
 
         "💡 **总体结论**\n"
-        "……"
+
+        "总体内容……"
 
     )
 
 
     try:
+
+        # ----------------------------------------------------
+        # 调用 Agnes
+        # ----------------------------------------------------
 
         response = client.chat.completions.create(
 
@@ -1232,16 +1363,25 @@ async def handle_summary(
             messages=[
 
                 {
+
                     "role": "system",
+
                     "content": system_prompt
+
                 },
 
                 {
+
                     "role": "user",
+
                     "content": (
+
                         "以下是聊天记录：\n\n"
+
                         + formatted_history
+
                     )
+
                 }
 
             ]
@@ -1252,7 +1392,9 @@ async def handle_summary(
         if not response.choices:
 
             raise RuntimeError(
+
                 "AI 没有返回总结。"
+
             )
 
 
@@ -1262,63 +1404,363 @@ async def handle_summary(
         if not result:
 
             raise RuntimeError(
+
                 "AI 返回了空总结。"
+
             )
+
+
+        result = result.strip()
 
 
         # ----------------------------------------------------
-        # 添加消息链接
+        # 删除 AI 偶尔生成的裸 Telegram URL
         # ----------------------------------------------------
 
-        links = []
+        result = re.sub(
 
+            r"https?://t\.me/[^\s)\]>]+",
 
-        for index, item in enumerate(
-            history,
-            start=1
-        ):
-
-            msg_link = (
-                f"{chat_link_prefix}/{item['message_id']}"
-            )
-
-
-            links.append(
-                f"[消息 {index}]({msg_link})"
-            )
-
-
-        final_text = (
+            "",
 
             result
-
-            + "\n\n"
-
-            + "🔗 **相关消息**\n"
-
-            + "\n".join(links)
 
         )
 
 
-        await edit_ai_message(
+        # ----------------------------------------------------
+        # 删除 AI 偶尔自己生成的“相关消息”区域
+        # ----------------------------------------------------
 
-            context,
+        result = re.sub(
 
-            chat_id,
+            r"\n*🔗\s*(?:\*\*)?相关消息(?:\*\*)?.*",
 
-            status_msg.message_id,
+            "",
+
+            result,
+
+            flags=re.S
+
+        ).strip()
+
+
+        # ----------------------------------------------------
+        # 解析：
+        #
+        # [TOPIC:话题标题|MSG:3]
+        #
+        # ----------------------------------------------------
+
+        topic_pattern = re.compile(
+
+            r"\[TOPIC:(.*?)\|MSG:(\d+)\]"
+
+        )
+
+
+        topic_links = {}
+
+        topic_counter = 0
+
+
+        def replace_topic(match):
+
+            nonlocal topic_counter
+
+
+            topic_title = (
+
+                match.group(1).strip()
+
+            )
+
+
+            try:
+
+                msg_index = int(
+
+                    match.group(2)
+
+                )
+
+            except ValueError:
+
+                return match.group(0)
+
+
+            # ------------------------------------------------
+            # 检查消息编号
+            # ------------------------------------------------
+
+            if (
+
+                msg_index < 1
+
+                or
+
+                msg_index > len(history)
+
+            ):
+
+                return (
+
+                    f"📌 {topic_title}"
+
+                )
+
+
+            target_message = history[
+
+                msg_index - 1
+
+            ]
+
+
+            msg_link = (
+
+                f"{chat_link_prefix}/"
+
+                f"{target_message['message_id']}"
+
+            )
+
+
+            placeholder = (
+
+                f"TOPICLINKPLACEHOLDER"
+
+                f"{topic_counter}"
+
+            )
+
+
+            topic_links[placeholder] = (
+
+                topic_title,
+
+                msg_link
+
+            )
+
+
+            topic_counter += 1
+
+
+            return placeholder
+
+
+        result = topic_pattern.sub(
+
+            replace_topic,
+
+            result
+
+        )
+
+
+        # ----------------------------------------------------
+        # HTML escape 普通内容
+        # ----------------------------------------------------
+
+        final_text = html.escape(
+
+            result,
+
+            quote=False
+
+        )
+
+
+        # ----------------------------------------------------
+        # Markdown 加粗
+        # ----------------------------------------------------
+
+        final_text = re.sub(
+
+            r"\*\*(.+?)\*\*",
+
+            r"<b>\1</b>",
 
             final_text
 
         )
 
 
+        # ----------------------------------------------------
+        # Markdown 标题
+        # ----------------------------------------------------
+
+        final_text = re.sub(
+
+            r"(?m)^#{1,6}\s*(.+)$",
+
+            r"<b>\1</b>",
+
+            final_text
+
+        )
+
+
+        # ----------------------------------------------------
+        # Markdown 列表
+        # ----------------------------------------------------
+
+        final_text = re.sub(
+
+            r"(?m)^[ \t]*[-*]\s+",
+
+            "• ",
+
+            final_text
+
+        )
+
+
+        # ----------------------------------------------------
+        # 恢复蓝色可点击话题标题
+        # ----------------------------------------------------
+
+        for (
+
+            placeholder,
+
+            (
+
+                topic_title,
+
+                msg_link
+
+            )
+
+        ) in topic_links.items():
+
+
+            anchor = (
+
+                f'<a href="'
+                f'{html.escape(msg_link, quote=True)}'
+                f'">'
+                f'📌 {html.escape(topic_title)}'
+                f'</a>'
+
+            )
+
+
+            final_text = final_text.replace(
+
+                placeholder,
+
+                anchor
+
+            )
+
+
+        # ----------------------------------------------------
+        # 清理多余空行
+        # ----------------------------------------------------
+
+        final_text = re.sub(
+
+            r"\n{3,}",
+
+            "\n\n",
+
+            final_text
+
+        ).strip()
+
+
+        if not final_text:
+
+            raise RuntimeError(
+
+                "AI 总结内容为空。"
+
+            )
+
+
+        # ----------------------------------------------------
+        # Telegram 长度限制
+        # ----------------------------------------------------
+
+        if len(final_text) > MAX_TELEGRAM_LENGTH:
+
+            final_text = (
+
+                final_text[:3900]
+
+                + "\n\n"
+
+                + "……内容过长，已截断。"
+
+            )
+
+
+        # ----------------------------------------------------
+        # 发送最终总结
+        # ----------------------------------------------------
+
+        try:
+
+            await context.bot.edit_message_text(
+
+                chat_id=chat_id,
+
+                message_id=status_msg.message_id,
+
+                text=final_text,
+
+                parse_mode="HTML",
+
+                disable_web_page_preview=True
+
+            )
+
+
+        except Exception as send_error:
+
+            print("=" * 60)
+
+            print("[SUMMARY] HTML 总结发送失败")
+
+            print(repr(send_error))
+
+            print("=" * 60)
+
+
+            plain_text = re.sub(
+
+                r"<[^>]+>",
+
+                "",
+
+                final_text
+
+            )
+
+
+            await context.bot.edit_message_text(
+
+                chat_id=chat_id,
+
+                message_id=status_msg.message_id,
+
+                text=plain_text[:4000],
+
+                disable_web_page_preview=True
+
+            )
+
+
     except Exception as e:
 
         print("=" * 60)
+
         print("[SUMMARY] 群聊总结失败")
+
         print(repr(e))
+
         print("=" * 60)
 
 
@@ -1329,8 +1771,11 @@ async def handle_summary(
             message_id=status_msg.message_id,
 
             text=(
+
                 "❌ 群聊总结失败\n\n"
+
                 f"{str(e)}"
+
             )
 
         )
@@ -1351,8 +1796,11 @@ def register_handlers(
     application.add_handler(
 
         CommandHandler(
+
             "summary",
+
             handle_summary
+
         )
 
     )
@@ -1365,11 +1813,18 @@ def register_handlers(
     application.add_handler(
 
         MessageHandler(
+
             filters.ALL,
+
             handle_message
+
         )
 
     )
 
 
-    print("[HANDLER] Telegram handlers 注册完成")
+    print(
+
+        "[HANDLER] Telegram handlers 注册完成"
+
+    )
