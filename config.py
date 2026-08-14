@@ -34,7 +34,7 @@ CHAT_MODELS = {
     },
 
     "agnes-2.5-flashA": {
-        "name": "Agnes 2.5 Flash A",
+        "name": "Agnes 2.5 Flash",
         "description": "速度与能力平衡",
     },
 
