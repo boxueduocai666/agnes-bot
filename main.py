@@ -1,445 +1,429 @@
-import os
-import asyncio
-import threading
-
-from flask import Flask, request, jsonify
-from telegram import Update
-from telegram.ext import Application
-
-from bot_logic import register_handlers
-
-
-# ============================================================
-# 1. 环境变量
-# ============================================================
-
-TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
-AGNES_API_KEY = os.environ.get("AGNES_API_KEY")
-
-RENDER_EXTERNAL_URL = os.environ.get("RENDER_EXTERNAL_URL")
-WEBHOOK_URL = os.environ.get("WEBHOOK_URL")
-WEBHOOK_SECRET = os.environ.get("WEBHOOK_SECRET", "")
-
-
-if not TELEGRAM_TOKEN:
-    raise RuntimeError(
-        "❌ 未检测到 TELEGRAM_TOKEN，请在 Render → Environment 配置。"
-    )
-
-if not AGNES_API_KEY:
-    raise RuntimeError(
-        "❌ 未检测到 AGNES_API_KEY，请在 Render → Environment 配置。"
-    )
-
-
-# 如果没有手动设置 WEBHOOK_URL，
-# 自动使用 Render 提供的 RENDER_EXTERNAL_URL
-if not WEBHOOK_URL:
-
-    if not RENDER_EXTERNAL_URL:
-        raise RuntimeError(
-            "❌ 未找到 WEBHOOK_URL 或 RENDER_EXTERNAL_URL。"
-        )
-
-    WEBHOOK_URL = f"{RENDER_EXTERNAL_URL}/webhook"
-
-
-# ============================================================
-# 2. Flask
-# ============================================================
-
-app = Flask(__name__)
-
-
-@app.route("/")
-def home():
-    return "Agnes Bot is running smoothly!"
-
-
-@app.route("/health")
-def health():
-    return jsonify({
-        "status": "ok",
-        "service": "agnes-bot"
-    })
-
-
-# ============================================================
-# 3. Telegram Application
-# ============================================================
-
-print("[START] 正在创建 Telegram Application...", flush=True)
-
-telegram_app = (
-    Application.builder()
-    .token(TELEGRAM_TOKEN)
-    .build()
+from telegram import (
+    Update,
+    InlineKeyboardButton,
+    InlineKeyboardMarkup,
+    BotCommand,
 )
 
-print("[OK] Telegram Application 创建成功", flush=True)
+from telegram.ext import (
+    Application,
+    CommandHandler,
+    CallbackQueryHandler,
+    MessageHandler,
+    ContextTypes,
+    filters,
+)
+
+from config import (
+    DEFAULT_MODEL,
+    AVAILABLE_MODELS,
+)
+
+from ai_logic import (
+    get_user_model,
+    set_user_model,
+)
+
+from bot_logic import (
+    handle_message,
+    handle_summary,
+)
 
 
 # ============================================================
-# 4. 注册 Telegram handlers
+# /choose
 # ============================================================
 
-print("[START] 正在注册 Telegram handlers...", flush=True)
+async def choose_model(
 
-register_handlers(telegram_app)
+    update: Update,
 
-print("[OK] Telegram handlers 注册成功", flush=True)
+    context: ContextTypes.DEFAULT_TYPE
 
+):
 
-# ============================================================
-# 5. Telegram asyncio
-# ============================================================
-
-telegram_loop = asyncio.new_event_loop()
+    user = update.effective_user
 
 
-async def start_telegram():
+    if not user:
 
-    print("=" * 60, flush=True)
-    print("[TG 1/6] Telegram 初始化开始", flush=True)
-
-    try:
-
-        # ----------------------------------------------------
-        # 初始化
-        # ----------------------------------------------------
-
-        await telegram_app.initialize()
-
-        print(
-            "[TG 2/6] Telegram initialize() 成功",
-            flush=True
-        )
-
-        # ----------------------------------------------------
-        # 启动 Application
-        # ----------------------------------------------------
-
-        await telegram_app.start()
-
-        print(
-            "[TG 3/6] Telegram start() 成功",
-            flush=True
-        )
-
-        # ----------------------------------------------------
-        # 设置 Webhook
-        # ----------------------------------------------------
-
-        print(
-            "[TG 4/6] 正在设置 Telegram Webhook...",
-            flush=True
-        )
-
-        print(
-            f"[TG] Webhook URL = {WEBHOOK_URL}",
-            flush=True
-        )
-
-        if WEBHOOK_SECRET:
-            print(
-                "[TG] Webhook Secret = 已配置",
-                flush=True
-            )
-        else:
-            print(
-                "[TG] Webhook Secret = 未配置",
-                flush=True
-            )
-
-        await telegram_app.bot.set_webhook(
-            url=WEBHOOK_URL,
-            secret_token=(
-                WEBHOOK_SECRET
-                if WEBHOOK_SECRET
-                else None
-            ),
-            drop_pending_updates=False
-        )
-
-        print(
-            "[TG 5/6] ✅ Telegram Webhook 设置成功",
-            flush=True
-        )
-
-        # ----------------------------------------------------
-        # 获取 Webhook 当前状态
-        # ----------------------------------------------------
-
-        webhook_info = (
-            await telegram_app.bot.get_webhook_info()
-        )
-
-        print(
-            "[TG 6/6] ✅ Webhook 当前状态",
-            flush=True
-        )
-
-        print(
-            f"[TG] 当前 Webhook URL: {webhook_info.url}",
-            flush=True
-        )
-
-        print(
-            f"[TG] Pending updates: "
-            f"{webhook_info.pending_update_count}",
-            flush=True
-        )
-
-        print(
-            f"[TG] Last error date: "
-            f"{webhook_info.last_error_date}",
-            flush=True
-        )
-
-        print(
-            f"[TG] Last error message: "
-            f"{webhook_info.last_error_message}",
-            flush=True
-        )
-
-        print("=" * 60, flush=True)
-
-        print(
-            "🎉 Telegram Bot Webhook 启动完成！",
-            flush=True
-        )
-
-        print(
-            f"Webhook: {WEBHOOK_URL}",
-            flush=True
-        )
-
-        print("=" * 60, flush=True)
-
-        # 永久保持 asyncio 事件循环
-        await asyncio.Event().wait()
-
-    except Exception as e:
-
-        print("=" * 60, flush=True)
-
-        print(
-            "❌ Telegram 后台启动失败",
-            flush=True
-        )
-
-        print(
-            f"错误类型: {type(e).__name__}",
-            flush=True
-        )
-
-        print(
-            f"错误内容: {e}",
-            flush=True
-        )
-
-        print("=" * 60, flush=True)
-
-        raise
+        return
 
 
-# ============================================================
-# 6. Telegram 后台线程
-# ============================================================
+    current_model = get_user_model(
 
-def telegram_thread_target():
+        user.id
 
-    print(
-        "[THREAD] 正在启动 Telegram 后台线程...",
-        flush=True
     )
 
-    asyncio.set_event_loop(telegram_loop)
 
-    try:
+    keyboard = []
 
-        telegram_loop.run_until_complete(
-            start_telegram()
+
+    for model_id, info in AVAILABLE_MODELS.items():
+
+        current_mark = (
+
+            " ✅"
+
+            if model_id == current_model
+
+            else ""
+
         )
 
-    except Exception as e:
 
-        print("=" * 60, flush=True)
+        button_text = (
 
-        print(
-            "❌ Telegram 后台线程发生错误",
-            flush=True
+            info["name"]
+
+            + current_mark
+
         )
 
-        print(
-            f"错误类型: {type(e).__name__}",
-            flush=True
-        )
 
-        print(
-            f"错误内容: {e}",
-            flush=True
-        )
+        keyboard.append([
 
-        print("=" * 60, flush=True)
+            InlineKeyboardButton(
 
+                button_text,
 
-# ============================================================
-# 7. Telegram Webhook 接收接口
-# ============================================================
+                callback_data=f"model:{model_id}"
 
-@app.route("/webhook", methods=["POST"])
-def telegram_webhook():
-
-    print(
-        "[WEBHOOK] 📩 收到 Telegram 请求",
-        flush=True
-    )
-
-    # --------------------------------------------------------
-    # Secret 验证
-    # --------------------------------------------------------
-
-    if WEBHOOK_SECRET:
-
-        received_secret = request.headers.get(
-            "X-Telegram-Bot-Api-Secret-Token"
-        )
-
-        if received_secret != WEBHOOK_SECRET:
-
-            print(
-                "[WEBHOOK] ❌ Secret 验证失败",
-                flush=True
             )
 
-            return jsonify({
-                "ok": False,
-                "error": "Unauthorized"
-            }), 403
+        ])
 
-        print(
-            "[WEBHOOK] ✅ Secret 验证成功",
-            flush=True
+
+    keyboard.append([
+
+        InlineKeyboardButton(
+
+            "❌ 关闭",
+
+            callback_data="model:close"
+
         )
 
-    # --------------------------------------------------------
-    # 读取 Telegram Update
-    # --------------------------------------------------------
+    ])
 
-    try:
 
-        data = request.get_json(force=True)
+    reply_markup = InlineKeyboardMarkup(
 
-        print(
-            "[WEBHOOK] ✅ 收到 Telegram Update",
-            flush=True
-        )
+        keyboard
 
-        update = Update.de_json(
-            data,
-            telegram_app.bot
-        )
+    )
 
-        # ----------------------------------------------------
-        # 交给 Telegram Application 处理
-        # ----------------------------------------------------
 
-        asyncio.run_coroutine_threadsafe(
-            telegram_app.process_update(update),
-            telegram_loop
-        )
+    await update.message.reply_text(
 
-        print(
-            "[WEBHOOK] ✅ Update 已提交给 Telegram Application",
-            flush=True
-        )
+        "🤖 **选择 AI 模型**\n\n"
 
-        return jsonify({
-            "ok": True
-        })
+        f"当前模型：`{current_model}`\n\n"
 
-    except Exception as e:
+        "点击下面的按钮即可切换模型：",
 
-        print(
-            "[WEBHOOK] ❌ Webhook 处理失败",
-            flush=True
-        )
+        reply_markup=reply_markup,
 
-        print(
-            f"[WEBHOOK] 错误类型: {type(e).__name__}",
-            flush=True
-        )
+        parse_mode="Markdown"
 
-        print(
-            f"[WEBHOOK] 错误内容: {e}",
-            flush=True
-        )
-
-        return jsonify({
-            "ok": False,
-            "error": str(e)
-        }), 500
+    )
 
 
 # ============================================================
-# 8. 启动 Flask + Telegram
+# 模型按钮
+# ============================================================
+
+async def model_callback(
+
+    update: Update,
+
+    context: ContextTypes.DEFAULT_TYPE
+
+):
+
+    query = update.callback_query
+
+
+    await query.answer()
+
+
+    user = query.from_user
+
+
+    data = query.data
+
+
+    if data == "model:close":
+
+        try:
+
+            await query.edit_message_text(
+
+                "❌ 已关闭模型选择。"
+
+            )
+
+        except Exception:
+
+            pass
+
+        return
+
+
+    if not data.startswith("model:"):
+
+        return
+
+
+    model = data.split(
+
+        ":",
+
+        1
+
+    )[1]
+
+
+    if model not in AVAILABLE_MODELS:
+
+        await query.edit_message_text(
+
+            "❌ 无效的模型。"
+
+        )
+
+        return
+
+
+    success = set_user_model(
+
+        user.id,
+
+        model
+
+    )
+
+
+    if not success:
+
+        await query.edit_message_text(
+
+            "❌ 模型切换失败。"
+
+        )
+
+        return
+
+
+    info = AVAILABLE_MODELS[model]
+
+
+    await query.edit_message_text(
+
+        "✅ **模型切换成功**\n\n"
+
+        f"当前模型：**{info['name']}**\n"
+
+        f"模型 ID：`{model}`\n\n"
+
+        "现在直接 @机器人 提问即可。",
+
+        parse_mode="Markdown"
+
+    )
+
+
+# ============================================================
+# 设置 Telegram 命令菜单
+# ============================================================
+
+async def post_init(
+
+    application: Application
+
+):
+
+    await application.bot.set_my_commands([
+
+        BotCommand(
+
+            "choose",
+
+            "🤖 选择 AI 模型"
+
+        ),
+
+        BotCommand(
+
+            "summary",
+
+            "📝 总结最近群聊"
+
+        ),
+
+    ])
+
+
+    print(
+
+        "[BOT] Telegram 命令菜单设置完成"
+
+    )
+
+
+# ============================================================
+# 创建 Bot
+# ============================================================
+
+def main():
+
+    import os
+
+
+    bot_token = os.environ.get(
+
+        "TELEGRAM_BOT_TOKEN"
+
+    )
+
+
+    if not bot_token:
+
+        raise RuntimeError(
+
+            "未检测到 TELEGRAM_BOT_TOKEN，"
+            "请在 Render → Environment 中配置。"
+
+        )
+
+
+    application = (
+
+        Application.builder()
+
+        .token(bot_token)
+
+        .post_init(post_init)
+
+        .build()
+
+    )
+
+
+    # --------------------------------------------------------
+    # /choose
+    # --------------------------------------------------------
+
+    application.add_handler(
+
+        CommandHandler(
+
+            "choose",
+
+            choose_model
+
+        )
+
+    )
+
+
+    # --------------------------------------------------------
+    # /summary
+    # --------------------------------------------------------
+
+    application.add_handler(
+
+        CommandHandler(
+
+            "summary",
+
+            handle_summary
+
+        )
+
+    )
+
+
+    # --------------------------------------------------------
+    # 模型按钮
+    # --------------------------------------------------------
+
+    application.add_handler(
+
+        CallbackQueryHandler(
+
+            model_callback,
+
+            pattern=r"^model:"
+
+        )
+
+    )
+
+
+    # --------------------------------------------------------
+    # 普通消息 / 图片 / 回复
+    # --------------------------------------------------------
+
+    application.add_handler(
+
+        MessageHandler(
+
+            filters.ALL,
+
+            handle_message
+
+        )
+
+    )
+
+
+    print(
+
+        "=" * 60
+
+    )
+
+    print(
+
+        "🤖 Telegram AI Bot 启动"
+
+    )
+
+    print(
+
+        f"默认模型：{DEFAULT_MODEL}"
+
+    )
+
+    print(
+
+        "支持 /choose 模型选择"
+
+    )
+
+    print(
+
+        "支持 /summary 群聊总结"
+
+    )
+
+    print(
+
+        "=" * 60
+
+
+    )
+
+
+    application.run_polling()
+
+
+# ============================================================
+# 程序入口
 # ============================================================
 
 if __name__ == "__main__":
 
-    print("=" * 60, flush=True)
-
-    print(
-        "🚀 Agnes Telegram Bot 正在启动",
-        flush=True
-    )
-
-    print("=" * 60, flush=True)
-
-    # --------------------------------------------------------
-    # 启动 Telegram 后台线程
-    # --------------------------------------------------------
-
-    telegram_thread = threading.Thread(
-        target=telegram_thread_target,
-        daemon=True
-    )
-
-    telegram_thread.start()
-
-    print(
-        "[THREAD] ✅ Telegram 后台线程已启动",
-        flush=True
-    )
-
-    # --------------------------------------------------------
-    # Render PORT
-    # --------------------------------------------------------
-
-    port = int(
-        os.environ.get("PORT", 10000)
-    )
-
-    print(
-        f"[FLASK] Web 服务端口: {port}",
-        flush=True
-    )
-
-    print(
-        f"[FLASK] Webhook 地址: {WEBHOOK_URL}",
-        flush=True
-    )
-
-    print("=" * 60, flush=True)
-
-    # --------------------------------------------------------
-    # 启动 Flask
-    # --------------------------------------------------------
-
-    app.run(
-        host="0.0.0.0",
-        port=port,
-        debug=False,
-        use_reloader=False
-            )
+    main()
