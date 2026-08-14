@@ -32,9 +32,9 @@ except ImportError:
 
 AGNES_API_KEY = os.environ.get("AGNES_API_KEY")
 
-AGNES_BASE_URL = "https://apihub.agnes-ai.com/v1"
+AGNES_BASE_URL = "https://integrate.api.nvidia.com/v1"
 
-MODEL_NAME = "agnes-2.0-flash"
+MODEL_NAME = "z-ai/glm-5.2"
 
 
 if not AGNES_API_KEY:
