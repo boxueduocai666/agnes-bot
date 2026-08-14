@@ -1,4 +1,3 @@
-from collections import defaultdict
 import base64
 
 from openai import OpenAI
@@ -7,8 +6,8 @@ from config import (
     AGNES_API_KEY,
     AGNES_BASE_URL,
     DEFAULT_MODEL,
-    AVAILABLE_MODELS,
-    VISION_MODEL,
+    IMAGE_MODEL,
+    CHAT_MODELS,
 )
 
 
@@ -23,57 +22,81 @@ client = OpenAI(
 
 
 # ============================================================
-# 用户模型
+# 当前模型
 #
-# 每个 Telegram 用户独立选择模型
-# 不会因为一个人切换模型导致整个群一起切换
+# 每个用户可以独立选择模型。
 # ============================================================
 
-user_models = defaultdict(
-    lambda: DEFAULT_MODEL
-)
+user_models = {}
 
 
 # ============================================================
-# 获取用户当前模型
+# 获取当前模型
 # ============================================================
 
 def get_user_model(user_id):
 
-    return user_models[user_id]
+    return user_models.get(
+        user_id,
+        DEFAULT_MODEL
+    )
 
 
 # ============================================================
-# 设置用户模型
+# 设置模型
 # ============================================================
 
 def set_user_model(
     user_id,
-    model
+    model_name
 ):
 
-    if model not in AVAILABLE_MODELS:
+    if model_name not in CHAT_MODELS:
 
         return False
 
-    user_models[user_id] = model
+
+    user_models[user_id] = model_name
 
     return True
 
 
 # ============================================================
-# 调用 Agnes
+# 获取模型名称
+# ============================================================
+
+def get_model_display_name(model_name):
+
+    if model_name in CHAT_MODELS:
+
+        return CHAT_MODELS[model_name]["name"]
+
+
+    return model_name
+
+
+# ============================================================
+# 普通 AI 对话
 # ============================================================
 
 def ask_agnes(
     prompt: str,
+    user_id=None,
     system_prompt: str = None,
-    model: str = None
+    model_name: str = None
 ) -> str:
 
-    if not model:
+    if model_name is None:
 
-        model = DEFAULT_MODEL
+        if user_id is not None:
+
+            model_name = get_user_model(
+                user_id
+            )
+
+        else:
+
+            model_name = DEFAULT_MODEL
 
 
     messages = []
@@ -101,7 +124,7 @@ def ask_agnes(
 
     response = client.chat.completions.create(
 
-        model=model,
+        model=model_name,
 
         messages=messages
 
@@ -125,16 +148,17 @@ def ask_agnes(
 
 
 # ============================================================
-# 图片识别
+# 图片理解
 # ============================================================
 
 async def analyze_image(
     target_photo,
-    user_prompt: str
-):
+    user_prompt: str,
+    quote_context: str = ""
+) -> str:
 
     # --------------------------------------------------------
-    # 下载图片
+    # 下载 Telegram 图片
     # --------------------------------------------------------
 
     photo_file = await target_photo.get_file()
@@ -165,21 +189,26 @@ async def analyze_image(
 
 
     # --------------------------------------------------------
-    # 默认问题
+    # 默认图片问题
     # --------------------------------------------------------
 
     if not user_prompt.strip():
 
         user_prompt = (
-
             "请详细分析这张图片。"
-
             "描述图片中的主要内容、人物、物体、环境，"
-
             "以及能够从图片中明确判断出的信息。"
-
             "不要凭空编造不存在的信息。"
+        )
 
+
+    if quote_context:
+
+        user_prompt = (
+            quote_context
+            + "\n"
+            + "用户的问题：\n"
+            + user_prompt
         )
 
 
@@ -189,7 +218,7 @@ async def analyze_image(
 
     response = client.chat.completions.create(
 
-        model=VISION_MODEL,
+        model=IMAGE_MODEL,
 
         messages=[
 
