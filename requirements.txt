@@ -1,4 +1,4 @@
-flask
-python-telegram-bot
-openai
-ddgs
+Flask>=3.0,<4.0
+python-telegram-bot>=21.0,<23.0
+openai>=1.0
+duckduckgo-search>=7.0
