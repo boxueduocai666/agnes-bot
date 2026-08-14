@@ -33,7 +33,7 @@ CHAT_MODELS = {
         "description": "速度快，适合日常聊天",
     },
 
-    "agnes-2.5-flashA": {
+    "agnes-2.5-flash": {
         "name": "Agnes 2.5 Flash",
         "description": "速度与能力平衡",
     },
