@@ -34,7 +34,7 @@ AGNES_API_KEY = os.environ.get("AGNES_API_KEY")
 
 AGNES_BASE_URL = "https://apihub.agnes-ai.com/v1"
 
-MODEL_NAME = "agnes-2.0-flash"
+MODEL_NAME = "agnes-2.5-flash"
 
 
 if not AGNES_API_KEY:
