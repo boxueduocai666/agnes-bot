@@ -33,6 +33,62 @@ group_history = defaultdict(list)
 
 
 # ============================================================
+# 群聊总结：低信息量消息过滤
+# ============================================================
+
+IGNORED_SUMMARY_MESSAGES = {
+    "你好",
+    "嗨",
+    "hi",
+    "hello",
+    "哈喽",
+    "哈哈",
+    "哈哈哈",
+    "哈哈哈哈",
+    "呵呵",
+    "嗯",
+    "嗯嗯",
+    "哦",
+    "哦哦",
+    "好的",
+    "好",
+    "行",
+    "收到",
+    "知道了",
+    "明白",
+    "ok",
+    "OK",
+    "好的好的",
+    "谢谢",
+    "感谢",
+    "没事",
+    "没问题",
+}
+
+
+def is_meaningless_summary_message(text):
+
+    if not text:
+        return True
+
+    cleaned = text.strip()
+
+    if not cleaned:
+        return True
+
+    if cleaned.lower() in {
+        item.lower()
+        for item in IGNORED_SUMMARY_MESSAGES
+    }:
+        return True
+
+    if len(cleaned) <= 1:
+        return True
+
+    return False
+
+
+# ============================================================
 # 获取机器人用户名
 # ============================================================
 
@@ -75,7 +131,6 @@ def add_group_history(
 
     })
 
-
     if len(group_history[chat_id]) > MAX_HISTORY:
 
         group_history[chat_id].pop(0)
@@ -94,35 +149,47 @@ async def handle_summary(
 
         return
 
-
     chat = update.effective_chat
 
     chat_id = chat.id
-
 
     history = group_history.get(
         chat_id,
         []
     )
 
+    # --------------------------------------------------------
+    # 过滤无意义消息
+    # --------------------------------------------------------
 
-    if len(history) < 3:
+    meaningful_history = [
+
+        item
+
+        for item in history
+
+        if not is_meaningless_summary_message(
+            item["text"]
+        )
+
+    ]
+
+    if len(meaningful_history) < 3:
 
         await update.message.reply_text(
 
-            "📝 目前记录太少，至少需要 3 条消息才能进行总结。"
+            "📝 目前有意义的聊天内容太少，"
+            "至少需要 3 条消息才能进行总结。"
 
         )
 
         return
-
 
     status_msg = await update.message.reply_text(
 
         "📝 正在生成群聊总结……"
 
     )
-
 
     # --------------------------------------------------------
     # 创建 Telegram 消息链接
@@ -138,7 +205,6 @@ async def handle_summary(
 
         cid = str(chat_id)
 
-
         if cid.startswith("-100"):
 
             cid = cid[4:]
@@ -147,11 +213,9 @@ async def handle_summary(
 
             cid = cid.replace("-", "")
 
-
         chat_link_prefix = (
             f"https://t.me/c/{cid}"
         )
-
 
     # --------------------------------------------------------
     # 构造聊天记录
@@ -159,9 +223,8 @@ async def handle_summary(
 
     formatted_lines = []
 
-
     for index, item in enumerate(
-        history,
+        meaningful_history,
         start=1
     ):
 
@@ -173,11 +236,9 @@ async def handle_summary(
 
         )
 
-
     formatted_history = "\n\n".join(
         formatted_lines
     )
-
 
     # --------------------------------------------------------
     # 总结 Prompt
@@ -217,7 +278,6 @@ async def handle_summary(
 
     )
 
-
     try:
 
         response = ask_agnes(
@@ -231,9 +291,7 @@ async def handle_summary(
 
         )
 
-
         result = response.strip()
-
 
         # ----------------------------------------------------
         # 删除 AI 生成的 Telegram URL
@@ -251,7 +309,6 @@ async def handle_summary(
 
         )
 
-
         # ----------------------------------------------------
         # 删除相关消息区域
         # ----------------------------------------------------
@@ -268,7 +325,6 @@ async def handle_summary(
 
         ).strip()
 
-
         # ----------------------------------------------------
         # TOPIC
         # ----------------------------------------------------
@@ -279,26 +335,21 @@ async def handle_summary(
 
         )
 
-
         topic_links = {}
 
         topic_counter = 0
-
 
         def replace_topic(match):
 
             nonlocal topic_counter
 
-
             topic_title = (
                 match.group(1).strip()
             )
 
-
             msg_index = int(
                 match.group(2)
             )
-
 
             if (
 
@@ -306,29 +357,25 @@ async def handle_summary(
 
                 or
 
-                msg_index > len(history)
+                msg_index > len(meaningful_history)
 
             ):
 
                 return f"📌 {topic_title}"
 
-
-            target_message = history[
+            target_message = meaningful_history[
                 msg_index - 1
             ]
-
 
             msg_link = (
                 f"{chat_link_prefix}/"
                 f"{target_message['message_id']}"
             )
 
-
             placeholder = (
                 f"TOPICLINKPLACEHOLDER"
                 f"{topic_counter}"
             )
-
 
             topic_links[placeholder] = (
 
@@ -338,18 +385,14 @@ async def handle_summary(
 
             )
 
-
             topic_counter += 1
 
-
             return placeholder
-
 
         result = topic_pattern.sub(
             replace_topic,
             result
         )
-
 
         # ----------------------------------------------------
         # 使用统一排版
@@ -360,7 +403,6 @@ async def handle_summary(
         final_text = format_ai_reply(
             result
         )
-
 
         # ----------------------------------------------------
         # 恢复 Topic 链接
@@ -392,7 +434,6 @@ async def handle_summary(
 
             )
 
-
             final_text = final_text.replace(
 
                 placeholder,
@@ -400,7 +441,6 @@ async def handle_summary(
                 anchor
 
             )
-
 
         # ----------------------------------------------------
         # 发送
@@ -430,7 +470,6 @@ async def handle_summary(
                 final_text
             )
 
-
             await context.bot.edit_message_text(
 
                 chat_id=chat_id,
@@ -443,14 +482,12 @@ async def handle_summary(
 
             )
 
-
     except Exception as e:
 
         print("=" * 60)
         print("[SUMMARY] 群聊总结失败")
         print(repr(e))
         print("=" * 60)
-
 
         await context.bot.edit_message_text(
 
@@ -479,26 +516,21 @@ async def handle_message(
 
         return
 
-
     chat = update.effective_chat
 
     user = update.effective_user
-
 
     if not user:
 
         return
 
-
     chat_id = chat.id
-
 
     user_name = (
         user.first_name
         or user.username
         or "Anonymous"
     )
-
 
     # --------------------------------------------------------
     # Bot username
@@ -508,7 +540,6 @@ async def handle_message(
         context
     )
 
-
     # --------------------------------------------------------
     # 当前消息
     # --------------------------------------------------------
@@ -516,7 +547,6 @@ async def handle_message(
     text = get_message_text(
         update.message
     )
-
 
     # --------------------------------------------------------
     # 引用
@@ -526,7 +556,6 @@ async def handle_message(
         update.message
     )
 
-
     # --------------------------------------------------------
     # 私聊
     # --------------------------------------------------------
@@ -535,13 +564,11 @@ async def handle_message(
         chat.type == ChatType.PRIVATE
     )
 
-
     # --------------------------------------------------------
     # @机器人
     # --------------------------------------------------------
 
     is_mentioned = False
-
 
     if bot_username and text:
 
@@ -553,20 +580,17 @@ async def handle_message(
 
         )
 
-
     # --------------------------------------------------------
     # 回复机器人
     # --------------------------------------------------------
 
     is_reply_to_bot = False
 
-
     if update.message.reply_to_message:
 
         replied_user = (
             update.message.reply_to_message.from_user
         )
-
 
         if replied_user:
 
@@ -587,20 +611,17 @@ async def handle_message(
 
                 is_reply_to_bot = True
 
-
     # ========================================================
     # 图片
     # ========================================================
 
     target_photo = None
 
-
     if update.message.photo:
 
         target_photo = (
             update.message.photo[-1]
         )
-
 
     elif (
 
@@ -615,7 +636,6 @@ async def handle_message(
         target_photo = (
             update.message.reply_to_message.photo[-1]
         )
-
 
     if target_photo:
 
@@ -633,14 +653,11 @@ async def handle_message(
 
         )
 
-
         if not allowed:
 
             return
 
-
         user_prompt = text
-
 
         if bot_username:
 
@@ -652,16 +669,17 @@ async def handle_message(
 
             )
 
-
         user_prompt = user_prompt.strip()
 
+        # ====================================================
+        # 注意：图片保持原来的提示，不改成 🤔
+        # ====================================================
 
         processing_msg = await update.message.reply_text(
 
             "🖼️ 正在看图……"
 
         )
-
 
         try:
 
@@ -675,7 +693,6 @@ async def handle_message(
 
             )
 
-
             await edit_ai_message(
 
                 context,
@@ -687,7 +704,6 @@ async def handle_message(
                 reply
 
             )
-
 
         except Exception as e:
 
@@ -704,9 +720,7 @@ async def handle_message(
 
             )
 
-
         return
-
 
     # ========================================================
     # 普通文字
@@ -715,7 +729,6 @@ async def handle_message(
     if not text.strip():
 
         return
-
 
     # --------------------------------------------------------
     # 记录群聊历史
@@ -743,7 +756,6 @@ async def handle_message(
 
             )
 
-
     # --------------------------------------------------------
     # 触发条件
     # --------------------------------------------------------
@@ -764,13 +776,11 @@ async def handle_message(
 
         return
 
-
     # --------------------------------------------------------
     # 去除 @机器人
     # --------------------------------------------------------
 
     prompt = text
-
 
     if bot_username:
 
@@ -782,9 +792,7 @@ async def handle_message(
 
         )
 
-
     prompt = prompt.strip()
-
 
     if not prompt:
 
@@ -798,17 +806,20 @@ async def handle_message(
 
             return
 
-
     # ========================================================
     # AI
     # ========================================================
 
+    # --------------------------------------------------------
+    # 文字消息使用 🤔
+    # 图片消息仍然使用 🖼️
+    # --------------------------------------------------------
+
     processing_msg = await update.message.reply_text(
 
-        "🔎 正在思考并查询相关信息……"
+        "🤔"
 
     )
-
 
     try:
 
@@ -819,7 +830,6 @@ async def handle_message(
         search_results = search_web(
             prompt
         )
-
 
         # ----------------------------------------------------
         # 系统提示词
@@ -852,14 +862,11 @@ async def handle_message(
 
         )
 
-
         final_prompt = ""
-
 
         if quote_context:
 
             final_prompt += quote_context
-
 
         final_prompt += (
 
@@ -870,7 +877,6 @@ async def handle_message(
 
         )
 
-
         # ----------------------------------------------------
         # 当前模型
         # ----------------------------------------------------
@@ -879,14 +885,12 @@ async def handle_message(
             user.id
         )
 
-
         print("=" * 60)
         print("[AI] 收到用户问题")
         print(f"[AI] 用户：{user_name}")
         print(f"[AI] 模型：{current_model}")
         print(f"[AI] 问题：{prompt}")
         print("=" * 60)
-
 
         # ----------------------------------------------------
         # 调用 AI
@@ -902,6 +906,9 @@ async def handle_message(
 
         )
 
+        # ----------------------------------------------------
+        # AI 回复会直接替换 🤔
+        # ----------------------------------------------------
 
         await edit_ai_message(
 
@@ -915,14 +922,12 @@ async def handle_message(
 
         )
 
-
     except Exception as e:
 
         print("=" * 60)
         print("[AI] 请求失败")
         print(repr(e))
         print("=" * 60)
-
 
         await context.bot.edit_message_text(
 
@@ -935,4 +940,4 @@ async def handle_message(
                 f"{str(e)}"
             )
 
-        )
+    )
