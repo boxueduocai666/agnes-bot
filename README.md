@@ -1,4 +1,4 @@
-# telegram-ai-bot（可切换模型）
+# telegram-ai-bot（固定 API，多模型）
 
 一个基于 Python 构建的轻量级、高度可扩展的 Telegram AI 机器人框架。支持 Webhook 部署，具备多轮对话、联网搜索、图片分析、群聊上下文、群聊总结及 AI 模型切换等能力。
 
