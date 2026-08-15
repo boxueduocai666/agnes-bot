@@ -41,7 +41,6 @@ async def start_command(
         update.effective_user.id
     )
 
-
     await update.message.reply_text(
 
         "🤖 **Agnes AI Telegram Bot**\n\n"
@@ -121,14 +120,11 @@ async def model_command(
         update.effective_user.id
     )
 
-
     model_info = CHAT_MODELS.get(
         current_model
     )
 
-
     description = ""
-
 
     if model_info:
 
@@ -136,7 +132,6 @@ async def model_command(
             "description",
             ""
         )
-
 
     await update.message.reply_text(
 
@@ -168,36 +163,37 @@ async def choose_command(
         update.effective_user.id
     )
 
-
     keyboard = []
-
 
     # --------------------------------------------------------
     # 每个模型一个按钮
+    # 显示名称 + 实际 Model ID
     # --------------------------------------------------------
 
     for model_id, info in CHAT_MODELS.items():
 
         name = info["name"]
 
-
         if model_id == current_model:
 
             name = "✅ " + name
 
+        button_text = (
+            f"{name}\n"
+            f"{model_id}"
+        )
 
         keyboard.append([
 
             InlineKeyboardButton(
 
-                name,
+                button_text,
 
                 callback_data=f"choose:{model_id}"
 
             )
 
         ])
-
 
     keyboard.append([
 
@@ -211,11 +207,9 @@ async def choose_command(
 
     ])
 
-
     reply_markup = InlineKeyboardMarkup(
         keyboard
     )
-
 
     await update.message.reply_text(
 
@@ -244,23 +238,18 @@ async def choose_callback(
 
     query = update.callback_query
 
-
     await query.answer()
 
-
     data = query.data
-
 
     if not data.startswith("choose:"):
 
         return
 
-
     value = data.split(
         ":",
         1
     )[1]
-
 
     # --------------------------------------------------------
     # 关闭
@@ -276,7 +265,6 @@ async def choose_callback(
 
         return
 
-
     # --------------------------------------------------------
     # 检查模型
     # --------------------------------------------------------
@@ -291,7 +279,6 @@ async def choose_callback(
 
         return
 
-
     # --------------------------------------------------------
     # 设置模型
     # --------------------------------------------------------
@@ -304,7 +291,6 @@ async def choose_callback(
 
     )
 
-
     if not success:
 
         await query.edit_message_text(
@@ -315,23 +301,22 @@ async def choose_callback(
 
         return
 
-
     model_name = get_model_display_name(
         value
     )
-
 
     description = CHAT_MODELS[value].get(
         "description",
         ""
     )
 
-
     await query.edit_message_text(
 
         "✅ **模型切换成功！**\n\n"
 
-        f"🧠 当前模型：**{model_name}**\n\n"
+        f"🧠 当前模型：**{model_name}**\n"
+
+        f"⚙️ `{value}`\n\n"
 
         f"📌 {description}\n\n"
 
@@ -379,11 +364,9 @@ async def setup_bot_commands(
 
     ]
 
-
     await application.bot.set_my_commands(
         commands
     )
-
 
     print(
         "[MENU] Telegram 命令菜单设置完成"
@@ -396,16 +379,11 @@ async def setup_bot_commands(
 
 def main():
 
-    # --------------------------------------------------------
-    # 从环境变量读取 Telegram Token
-    # --------------------------------------------------------
-
     import os
 
     TELEGRAM_TOKEN = os.environ.get(
         "TELEGRAM_TOKEN"
     )
-
 
     if not TELEGRAM_TOKEN:
 
@@ -415,11 +393,6 @@ def main():
             "请在 Render → Environment 中配置。"
 
         )
-
-
-    # --------------------------------------------------------
-    # 创建 Application
-    # --------------------------------------------------------
 
     application = (
 
@@ -432,7 +405,6 @@ def main():
         .build()
 
     )
-
 
     # --------------------------------------------------------
     # 命令
@@ -447,7 +419,6 @@ def main():
 
     )
 
-
     application.add_handler(
 
         CommandHandler(
@@ -456,7 +427,6 @@ def main():
         )
 
     )
-
 
     application.add_handler(
 
@@ -467,7 +437,6 @@ def main():
 
     )
 
-
     application.add_handler(
 
         CommandHandler(
@@ -477,7 +446,6 @@ def main():
 
     )
 
-
     application.add_handler(
 
         CommandHandler(
@@ -486,7 +454,6 @@ def main():
         )
 
     )
-
 
     # --------------------------------------------------------
     # 模型选择按钮
@@ -500,7 +467,6 @@ def main():
         )
 
     )
-
 
     # --------------------------------------------------------
     # 普通消息
@@ -517,7 +483,6 @@ def main():
 
     )
 
-
     print("=" * 60)
     print("🤖 Agnes Telegram Bot 启动")
     print(f"🧠 默认模型：{DEFAULT_MODEL}")
@@ -527,11 +492,6 @@ def main():
     print("📝 群聊总结：已启用")
     print("🧠 模型选择：已启用")
     print("=" * 60)
-
-
-    # --------------------------------------------------------
-    # 启动
-    # --------------------------------------------------------
 
     application.run_polling()
 
