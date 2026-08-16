@@ -2,12 +2,14 @@ from collections import defaultdict
 
 from telegram import Update
 from telegram.constants import ChatType
+
 from telegram.ext import (
     ContextTypes,
 )
 
 from config import (
     MAX_HISTORY,
+    AUTO_SUMMARY_MESSAGE_COUNT,
 )
 
 from ai_logic import (
@@ -22,6 +24,14 @@ from utils import (
     build_quote_context,
     search_web,
     edit_ai_message,
+    format_ai_reply,
+)
+
+from database import (
+    save_message,
+    get_message_count,
+    get_messages,
+    clear_messages,
 )
 
 
@@ -33,59 +43,59 @@ group_history = defaultdict(list)
 
 
 # ============================================================
-# 群聊总结：低信息量消息过滤
+# 无意义群聊消息
 # ============================================================
 
-IGNORED_SUMMARY_MESSAGES = {
+IGNORED_MESSAGES = {
+
     "你好",
     "嗨",
-    "hi",
-    "hello",
     "哈喽",
+    "hello",
+    "hi",
+    "早",
+    "早上好",
+    "晚上好",
+    "晚安",
     "哈哈",
     "哈哈哈",
     "哈哈哈哈",
-    "呵呵",
     "嗯",
-    "嗯嗯",
     "哦",
-    "哦哦",
+    "噢",
+    "啊",
     "好的",
     "好",
-    "行",
     "收到",
-    "知道了",
-    "明白",
     "ok",
     "OK",
-    "好的好的",
-    "谢谢",
-    "感谢",
-    "没事",
-    "没问题",
+    "666",
+    "6",
+
 }
 
 
-def is_meaningless_summary_message(text):
+def is_meaningful_message(text):
 
     if not text:
-        return True
+
+        return False
 
     cleaned = text.strip()
 
     if not cleaned:
-        return True
 
-    if cleaned.lower() in {
-        item.lower()
-        for item in IGNORED_SUMMARY_MESSAGES
-    }:
-        return True
+        return False
+
+    if cleaned in IGNORED_MESSAGES:
+
+        return False
 
     if len(cleaned) <= 1:
-        return True
 
-    return False
+        return False
+
+    return True
 
 
 # ============================================================
@@ -137,6 +147,123 @@ def add_group_history(
 
 
 # ============================================================
+# 自动群聊总结
+# ============================================================
+
+async def auto_summary(
+    chat_id,
+    context
+):
+
+    messages = get_messages(
+        chat_id
+    )
+
+    if len(messages) < AUTO_SUMMARY_MESSAGE_COUNT:
+
+        return False
+
+    print("=" * 60)
+    print("[AUTO SUMMARY] 开始自动总结")
+    print(f"[AUTO SUMMARY] Chat ID：{chat_id}")
+    print(f"[AUTO SUMMARY] 消息数量：{len(messages)}")
+    print("=" * 60)
+
+    formatted_lines = []
+
+    for index, item in enumerate(
+        messages,
+        start=1
+    ):
+
+        formatted_lines.append(
+
+            f"[MSG:{index}]\n"
+            f"用户：{item['user']}\n"
+            f"内容：{item['text']}"
+
+        )
+
+    formatted_history = "\n\n".join(
+        formatted_lines
+    )
+
+    system_prompt = (
+
+        "你是一个 Telegram 群聊总结助手。\n\n"
+
+        "请总结下面这段群聊。\n\n"
+
+        "要求：\n"
+        "1. 过滤无意义的闲聊和打招呼。\n"
+        "2. 找出主要讨论话题。\n"
+        "3. 总结重要观点、问题和结论。\n"
+        "4. 不要编造不存在的信息。\n"
+        "5. 使用自然中文。\n"
+        "6. 使用 Markdown 排版。\n"
+        "7. 使用简洁的 emoji 小标题。\n"
+        "8. 不需要输出消息链接。\n"
+        "9. 不需要输出 MSG 编号。\n"
+        "10. 如果聊天内容没有明确结论，不要强行制造结论。\n\n"
+
+        "最后给出：\n"
+        "💡 **总体结论**"
+
+    )
+
+    try:
+
+        reply = ask_agnes(
+
+            prompt=(
+                "以下是需要总结的群聊记录：\n\n"
+                + formatted_history
+            ),
+
+            system_prompt=system_prompt
+
+        )
+
+        if not reply:
+
+            return False
+
+        await context.bot.send_message(
+
+            chat_id=chat_id,
+
+            text=(
+                "📝 **群聊自动总结**\n\n"
+                + reply
+            ),
+
+            parse_mode="Markdown"
+
+        )
+
+        clear_messages(
+            chat_id
+        )
+
+        print(
+            "[AUTO SUMMARY] 总结完成，已清理旧消息"
+        )
+
+        return True
+
+    except Exception as e:
+
+        print("=" * 60)
+        print("[AUTO SUMMARY] 总结失败")
+        print(repr(e))
+        print("=" * 60)
+
+        # 总结失败时绝对不清理数据库
+
+        return False
+
+
+# ============================================================
 # /summary
 # ============================================================
 
@@ -153,33 +280,27 @@ async def handle_summary(
 
     chat_id = chat.id
 
-    history = group_history.get(
-        chat_id,
-        []
+    # --------------------------------------------------------
+    # 优先读取 SQLite
+    # --------------------------------------------------------
+
+    history = get_messages(
+        chat_id
     )
 
-    # --------------------------------------------------------
-    # 过滤无意义消息
-    # --------------------------------------------------------
+    # 如果 SQLite 没有数据，则使用内存历史
+    if not history:
 
-    meaningful_history = [
-
-        item
-
-        for item in history
-
-        if not is_meaningless_summary_message(
-            item["text"]
+        history = group_history.get(
+            chat_id,
+            []
         )
 
-    ]
-
-    if len(meaningful_history) < 3:
+    if len(history) < 3:
 
         await update.message.reply_text(
 
-            "📝 目前有意义的聊天内容太少，"
-            "至少需要 3 条消息才能进行总结。"
+            "📝 目前记录太少，至少需要 3 条有效消息才能进行总结。"
 
         )
 
@@ -192,7 +313,7 @@ async def handle_summary(
     )
 
     # --------------------------------------------------------
-    # 创建 Telegram 消息链接
+    # Telegram 消息链接
     # --------------------------------------------------------
 
     if chat.username:
@@ -224,7 +345,7 @@ async def handle_summary(
     formatted_lines = []
 
     for index, item in enumerate(
-        meaningful_history,
+        history,
         start=1
     ):
 
@@ -252,26 +373,27 @@ async def handle_summary(
 
         "要求：\n"
 
-        "1. 找出 3-5 个主要话题。\n"
-        "2. 每个话题简洁说明。\n"
-        "3. 不要编造聊天记录中不存在的内容。\n"
-        "4. 使用自然中文。\n"
-        "5. 使用 Markdown 排版。\n"
-        "6. 重要内容可以使用 **加粗**。\n"
-        "7. 使用 emoji 小标题。\n\n"
+        "1. 自动过滤无意义的打招呼、寒暄和简单回应。\n"
+        "2. 找出 3-5 个主要话题。\n"
+        "3. 每个话题简洁说明。\n"
+        "4. 不要编造聊天记录中不存在的内容。\n"
+        "5. 使用自然中文。\n"
+        "6. 使用 Markdown 排版。\n"
+        "7. 重要内容可以使用 **加粗**。\n"
+        "8. 使用 emoji 小标题。\n\n"
 
-        "8. 每个主要话题必须使用：\n"
+        "9. 每个主要话题必须使用：\n"
         "[TOPIC:话题标题|MSG:消息编号]\n\n"
 
-        "9. MSG 必须是真实存在的 MSG 编号。\n"
+        "10. MSG 必须是真实存在的 MSG 编号。\n"
 
-        "10. 每个话题只选择一条最有代表性的消息。\n"
+        "11. 每个话题只选择一条最有代表性的消息。\n"
 
-        "11. 不要输出完整 URL。\n"
+        "12. 不要输出完整 URL。\n"
 
-        "12. 不要生成“相关消息”区域。\n"
+        "13. 不要生成“相关消息”区域。\n"
 
-        "13. 最后使用：\n"
+        "14. 最后使用：\n"
         "💡 **总体结论**\n\n"
 
         "然后给出整体总结。"
@@ -357,13 +479,13 @@ async def handle_summary(
 
                 or
 
-                msg_index > len(meaningful_history)
+                msg_index > len(history)
 
             ):
 
                 return f"📌 {topic_title}"
 
-            target_message = meaningful_history[
+            target_message = history[
                 msg_index - 1
             ]
 
@@ -380,7 +502,6 @@ async def handle_summary(
             topic_links[placeholder] = (
 
                 topic_title,
-
                 msg_link
 
             )
@@ -395,10 +516,8 @@ async def handle_summary(
         )
 
         # ----------------------------------------------------
-        # 使用统一排版
+        # 统一排版
         # ----------------------------------------------------
-
-        from utils import format_ai_reply
 
         final_text = format_ai_reply(
             result
@@ -527,9 +646,13 @@ async def handle_message(
     chat_id = chat.id
 
     user_name = (
+
         user.first_name
+
         or user.username
+
         or "Anonymous"
+
     )
 
     # --------------------------------------------------------
@@ -671,10 +794,6 @@ async def handle_message(
 
         user_prompt = user_prompt.strip()
 
-        # ====================================================
-        # 注意：图片保持原来的提示，不改成 🤔
-        # ====================================================
-
         processing_msg = await update.message.reply_text(
 
             "🖼️ 正在看图……"
@@ -731,7 +850,7 @@ async def handle_message(
         return
 
     # --------------------------------------------------------
-    # 记录群聊历史
+    # 群聊记录
     # --------------------------------------------------------
 
     if chat.type in (
@@ -744,17 +863,57 @@ async def handle_message(
 
         if not text.startswith("/"):
 
-            add_group_history(
+            if is_meaningful_message(text):
 
-                chat_id,
+                # --------------------------------------------
+                # 内存历史
+                # --------------------------------------------
 
-                user_name,
+                add_group_history(
 
-                text,
+                    chat_id,
 
-                update.message.message_id
+                    user_name,
 
-            )
+                    text,
+
+                    update.message.message_id
+
+                )
+
+                # --------------------------------------------
+                # SQLite
+                # --------------------------------------------
+
+                save_message(
+
+                    chat_id,
+
+                    update.message.message_id,
+
+                    user_name,
+
+                    text
+
+                )
+
+                # --------------------------------------------
+                # 自动总结
+                # --------------------------------------------
+
+                message_count = get_message_count(
+                    chat_id
+                )
+
+                if message_count >= AUTO_SUMMARY_MESSAGE_COUNT:
+
+                    await auto_summary(
+
+                        chat_id,
+
+                        context
+
+                    )
 
     # --------------------------------------------------------
     # 触发条件
@@ -810,11 +969,6 @@ async def handle_message(
     # AI
     # ========================================================
 
-    # --------------------------------------------------------
-    # 文字消息使用 🤔
-    # 图片消息仍然使用 🖼️
-    # --------------------------------------------------------
-
     processing_msg = await update.message.reply_text(
 
         "🤔"
@@ -822,14 +976,6 @@ async def handle_message(
     )
 
     try:
-
-        # ----------------------------------------------------
-        # 联网
-        # ----------------------------------------------------
-
-        search_results = search_web(
-            prompt
-        )
 
         # ----------------------------------------------------
         # 系统提示词
@@ -853,12 +999,6 @@ async def handle_message(
             "8. 列表使用 - 或 1. 2. 3.。\n"
             "9. 简单问题直接回答。\n"
             "10. 如果用户引用了消息，必须结合引用内容。\n"
-            "11. 不要编造联网搜索结果。\n\n"
-
-            "联网搜索结果：\n"
-            "--------------------\n"
-            f"{search_results}\n"
-            "--------------------"
 
         )
 
@@ -905,10 +1045,6 @@ async def handle_message(
             system_prompt=system_prompt
 
         )
-
-        # ----------------------------------------------------
-        # AI 回复会直接替换 🤔
-        # ----------------------------------------------------
 
         await edit_ai_message(
 
