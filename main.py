@@ -1,3 +1,5 @@
+import os
+
 from telegram import (
     Update,
     BotCommand,
@@ -9,6 +11,8 @@ from telegram.ext import (
     Application,
     CommandHandler,
     CallbackQueryHandler,
+    MessageHandler,
+    filters,
 )
 
 from config import (
@@ -25,6 +29,10 @@ from ai_logic import (
 from bot_logic import (
     handle_message,
     handle_summary,
+)
+
+from database import (
+    init_database,
 )
 
 
@@ -51,7 +59,6 @@ async def start_command(
         f"{get_model_display_name(current_model)}\n\n"
 
         "你可以：\n"
-
         "• 在群里 @我 提问\n"
         "• 回复我的消息继续聊天\n"
         "• 发送图片让我分析\n"
@@ -165,11 +172,6 @@ async def choose_command(
 
     keyboard = []
 
-    # --------------------------------------------------------
-    # 每个模型一个按钮
-    # 显示名称 + 实际 Model ID
-    # --------------------------------------------------------
-
     for model_id, info in CHAT_MODELS.items():
 
         name = info["name"]
@@ -178,16 +180,11 @@ async def choose_command(
 
             name = "✅ " + name
 
-        button_text = (
-            f"{name}\n"
-            f"{model_id}"
-        )
-
         keyboard.append([
 
             InlineKeyboardButton(
 
-                button_text,
+                name,
 
                 callback_data=f"choose:{model_id}"
 
@@ -314,9 +311,7 @@ async def choose_callback(
 
         "✅ **模型切换成功！**\n\n"
 
-        f"🧠 当前模型：**{model_name}**\n"
-
-        f"⚙️ `{value}`\n\n"
+        f"🧠 当前模型：**{model_name}**\n\n"
 
         f"📌 {description}\n\n"
 
@@ -328,7 +323,7 @@ async def choose_callback(
 
 
 # ============================================================
-# 设置 Telegram 命令菜单
+# Telegram 命令菜单
 # ============================================================
 
 async def setup_bot_commands(
@@ -379,7 +374,15 @@ async def setup_bot_commands(
 
 def main():
 
-    import os
+    # --------------------------------------------------------
+    # 初始化 SQLite
+    # --------------------------------------------------------
+
+    init_database()
+
+    # --------------------------------------------------------
+    # Telegram Token
+    # --------------------------------------------------------
 
     TELEGRAM_TOKEN = os.environ.get(
         "TELEGRAM_TOKEN"
@@ -393,6 +396,10 @@ def main():
             "请在 Render → Environment 中配置。"
 
         )
+
+    # --------------------------------------------------------
+    # 创建 Application
+    # --------------------------------------------------------
 
     application = (
 
@@ -472,8 +479,6 @@ def main():
     # 普通消息
     # --------------------------------------------------------
 
-    from telegram.ext import MessageHandler, filters
-
     application.add_handler(
 
         MessageHandler(
@@ -490,8 +495,13 @@ def main():
     print("🎨 图片生成：未启用")
     print("🎬 视频生成：未启用")
     print("📝 群聊总结：已启用")
+    print("🤖 自动群聊总结：已启用")
     print("🧠 模型选择：已启用")
     print("=" * 60)
+
+    # --------------------------------------------------------
+    # 启动
+    # --------------------------------------------------------
 
     application.run_polling()
 
