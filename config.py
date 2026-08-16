@@ -45,9 +45,6 @@ CHAT_MODELS = {
 
     "agnes-2.5-pro-alpha": {
         "name": "Agnes 2.5 Pro Alpha",
-        "description": "实验性 Pro 模型",
-    },
-}
 
 
 # ============================================================
