@@ -22,9 +22,14 @@ client = OpenAI(
 
 
 # ============================================================
-# 用户当前模型
+# 当前模型
 #
-# 每个 Telegram 用户独立选择模型。
+# 每个用户独立保存自己的模型选择。
+#
+# user_id -> model_id
+#
+# 例如：
+# 123456789 -> agnes-2.5-pro
 # ============================================================
 
 user_models = {}
@@ -55,29 +60,20 @@ def set_user_model(
 
         return False
 
-
     user_models[user_id] = model_name
 
     return True
 
 
 # ============================================================
-# 获取模型显示名称
+# 获取模型名称
 # ============================================================
 
-def get_model_display_name(
-    model_name
-):
+def get_model_display_name(model_name):
 
     if model_name in CHAT_MODELS:
 
-        return CHAT_MODELS[
-            model_name
-        ].get(
-            "name",
-            model_name
-        )
-
+        return CHAT_MODELS[model_name]["name"]
 
     return model_name
 
@@ -92,6 +88,11 @@ def ask_agnes(
     system_prompt: str = None,
     model_name: str = None
 ) -> str:
+
+    # --------------------------------------------------------
+    # 如果没有手动指定模型
+    # 就按照用户当前选择的模型
+    # --------------------------------------------------------
 
     if model_name is None:
 
@@ -109,6 +110,10 @@ def ask_agnes(
     messages = []
 
 
+    # --------------------------------------------------------
+    # System Prompt
+    # --------------------------------------------------------
+
     if system_prompt:
 
         messages.append({
@@ -120,6 +125,10 @@ def ask_agnes(
         })
 
 
+    # --------------------------------------------------------
+    # User Prompt
+    # --------------------------------------------------------
+
     messages.append({
 
         "role": "user",
@@ -128,6 +137,10 @@ def ask_agnes(
 
     })
 
+
+    # --------------------------------------------------------
+    # 请求 AI
+    # --------------------------------------------------------
 
     response = client.chat.completions.create(
 
@@ -143,11 +156,7 @@ def ask_agnes(
         return "AI 没有返回有效结果。"
 
 
-    content = (
-        response.choices[0]
-        .message
-        .content
-    )
+    content = response.choices[0].message.content
 
 
     if not content:
@@ -174,9 +183,7 @@ async def analyze_image(
 
     photo_file = await target_photo.get_file()
 
-    image_bytes = (
-        await photo_file.download_as_bytearray()
-    )
+    image_bytes = await photo_file.download_as_bytearray()
 
 
     if not image_bytes:
@@ -208,34 +215,20 @@ async def analyze_image(
     if not user_prompt.strip():
 
         user_prompt = (
-
             "请详细分析这张图片。"
-
             "描述图片中的主要内容、人物、物体、环境，"
-
             "以及能够从图片中明确判断出的信息。"
-
             "不要凭空编造不存在的信息。"
-
         )
 
-
-    # --------------------------------------------------------
-    # 引用上下文
-    # --------------------------------------------------------
 
     if quote_context:
 
         user_prompt = (
-
             quote_context
-
             + "\n"
-
             + "用户的问题：\n"
-
             + user_prompt
-
         )
 
 
@@ -286,23 +279,15 @@ async def analyze_image(
 
     if not response.choices:
 
-        return (
-            "AI 没有返回图片分析结果。"
-        )
+        return "AI 没有返回图片分析结果。"
 
 
-    reply = (
-        response.choices[0]
-        .message
-        .content
-    )
+    reply = response.choices[0].message.content
 
 
     if not reply:
 
-        return (
-            "AI 返回了空的图片分析结果。"
-        )
+        return "AI 返回了空的图片分析结果。"
 
 
     return reply.strip()
