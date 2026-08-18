@@ -3,7 +3,7 @@ import re
 
 
 # ============================================================
-# 获取消息文字
+# 获取消息文本
 # ============================================================
 
 def get_message_text(message):
@@ -11,11 +11,13 @@ def get_message_text(message):
     if not message:
         return ""
 
-    return (
-        message.text
-        or message.caption
-        or ""
-    )
+    if message.text:
+        return message.text
+
+    if message.caption:
+        return message.caption
+
+    return ""
 
 
 # ============================================================
@@ -27,39 +29,7 @@ def get_quoted_message(message):
     if not message:
         return None
 
-    replied = message.reply_to_message
-
-    if not replied:
-        return None
-
-    quoted_text = get_message_text(replied)
-
-    quoted_user = replied.from_user
-
-    if quoted_user:
-
-        quoted_name = (
-            quoted_user.first_name
-            or quoted_user.username
-            or "未知用户"
-        )
-
-        if quoted_user.username:
-            quoted_name += f" (@{quoted_user.username})"
-
-    else:
-
-        quoted_name = "未知用户"
-
-
-    return {
-        "user": quoted_name,
-        "text": quoted_text,
-        "message_id": replied.message_id,
-        "has_photo": bool(replied.photo),
-        "has_document": bool(replied.document),
-        "has_video": bool(replied.video),
-    }
+    return message.reply_to_message
 
 
 # ============================================================
@@ -68,162 +38,190 @@ def get_quoted_message(message):
 
 def build_quote_context(message):
 
-    quote = get_quoted_message(message)
-
-    if not quote:
-        return ""
-
-
-    text = quote["text"].strip()
-
-
-    if not text:
-
-        if quote["has_photo"]:
-
-            text = "[这是一条图片消息，图片本身未提供文字内容。]"
-
-        elif quote["has_document"]:
-
-            text = "[这是一条文件消息。]"
-
-        elif quote["has_video"]:
-
-            text = "[这是一条视频消息。]"
-
-        else:
-
-            text = "[该消息没有文字内容。]"
-
-
-    result = (
-        "\n\n"
-        "【用户引用的消息】\n"
-        "--------------------\n"
-        f"发送者：{quote['user']}\n"
-        f"消息内容：{text}\n"
-        "--------------------\n"
-        "请结合这条被引用的消息理解用户的问题。\n"
+    quoted = get_quoted_message(
+        message
     )
 
 
-    print("=" * 60)
-    print("[QUOTE] 检测到引用消息")
-    print(f"[QUOTE] 发送者：{quote['user']}")
-    print(f"[QUOTE] 消息 ID：{quote['message_id']}")
-    print(f"[QUOTE] 内容：{text}")
-    print("=" * 60)
+    if not quoted:
+        return ""
 
 
-    return result
+    quoted_user = (
+        quoted.from_user
+    )
+
+
+    if quoted_user:
+
+        quoted_name = (
+            quoted_user.first_name
+            or quoted_user.username
+            or "用户"
+        )
+
+    else:
+
+        quoted_name = "用户"
+
+
+    quoted_text = get_message_text(
+        quoted
+    )
+
+
+    if not quoted_text:
+
+        quoted_text = (
+            "[这是一条图片或其他媒体消息]"
+        )
+
+
+    return (
+
+        "【引用的消息】\n"
+
+        f"用户：{quoted_name}\n"
+
+        f"内容：{quoted_text}\n\n"
+
+    )
 
 
 # ============================================================
 # 联网搜索
+#
+# 当前项目只是保留搜索工具。
+# AI 本身是否支持联网，由模型能力决定。
 # ============================================================
 
-def search_web(query: str) -> str:
+def search_web(query):
+
+    if not query:
+        return ""
+
 
     try:
 
-        try:
-            from ddgs import DDGS
-        except ImportError:
-            from duckduckgo_search import DDGS
-
+        from ddgs import DDGS
 
         results = []
 
 
         with DDGS() as ddgs:
 
-            for r in ddgs.text(
-                query,
-                max_results=5
-            ):
+            search_results = ddgs.text(
 
-                results.append(r)
+                query,
+
+                max_results=5
+
+            )
+
+
+            for item in search_results:
+
+                title = item.get(
+                    "title",
+                    ""
+                )
+
+                body = item.get(
+                    "body",
+                    ""
+                )
+
+                href = item.get(
+                    "href",
+                    ""
+                )
+
+
+                results.append(
+
+                    f"标题：{title}\n"
+                    f"摘要：{body}\n"
+                    f"链接：{href}"
+
+                )
 
 
         if not results:
 
-            return "未找到相关联网信息。"
-
-
-        output = []
-
-
-        for r in results:
-
-            title = r.get("title", "")
-            body = r.get("body", "")
-            href = r.get("href", "")
-
-
-            output.append(
-                f"- {title}\n"
-                f"  {body}\n"
-                f"  链接：{href}"
+            return (
+                "没有找到相关搜索结果。"
             )
 
 
-        return "\n\n".join(output)
+        return "\n\n".join(
+            results
+        )
 
 
     except Exception as e:
 
-        print("=" * 60)
-        print("[SEARCH] 联网搜索失败")
-        print(repr(e))
-        print("=" * 60)
+        print(
+            "[SEARCH] 搜索失败：",
+            repr(e)
+        )
 
-
-        return f"联网搜索失败：{e}"
+        return (
+            "联网搜索暂时不可用。"
+        )
 
 
 # ============================================================
-# AI 回复格式化
+# Markdown → Telegram HTML
 # ============================================================
 
-def format_ai_reply(text, max_length=4000):
+def format_ai_reply(
+    text,
+    max_length=4000
+):
 
     if not text:
-        return "AI 没有返回内容。"
+        return ""
 
 
     text = text.strip()
 
 
     # --------------------------------------------------------
-    # 先保护 Markdown 链接
+    # 保护代码块
     # --------------------------------------------------------
 
-    links = []
+    code_blocks = []
 
 
-    def save_link(match):
+    def save_code(match):
 
-        index = len(links)
+        index = len(code_blocks)
 
-        links.append(
-            (
-                match.group(1),
-                match.group(2)
-            )
+        code_blocks.append(
+            match.group(1)
         )
 
-        return f"LINKPLACEHOLDER{index}"
+        return (
+            f"__CODE_BLOCK_{index}__"
+        )
 
 
     text = re.sub(
-        r"\[([^\]]+)\]\((https?://[^\s)]+)\)",
-        save_link,
-        text
+
+        r"```(?:[a-zA-Z0-9_+-]+)?\n?"
+        r"(.*?)```",
+
+        save_code,
+
+        text,
+
+        flags=re.S
+
     )
 
 
     # --------------------------------------------------------
-    # HTML Escape
+    # HTML 转义
     # --------------------------------------------------------
 
     text = html.escape(
@@ -233,99 +231,80 @@ def format_ai_reply(text, max_length=4000):
 
 
     # --------------------------------------------------------
-    # 代码块
+    # 粗体
     # --------------------------------------------------------
 
     text = re.sub(
-        r"```(?:\w+)?\n?(.*?)```",
-        r"<pre>\1</pre>",
-        text,
-        flags=re.S
-    )
 
-
-    # --------------------------------------------------------
-    # 行内代码
-    # --------------------------------------------------------
-
-    text = re.sub(
-        r"`([^`\n]+)`",
-        r"<code>\1</code>",
-        text
-    )
-
-
-    # --------------------------------------------------------
-    # 加粗
-    # --------------------------------------------------------
-
-    text = re.sub(
         r"\*\*(.+?)\*\*",
+
         r"<b>\1</b>",
+
         text
+
     )
 
 
     # --------------------------------------------------------
-    # 标题
+    # Markdown 行内代码
     # --------------------------------------------------------
 
     text = re.sub(
-        r"(?m)^#{1,6}\s*(.+)$",
-        r"<b>\1</b>",
+
+        r"`([^`\n]+)`",
+
+        r"<code>\1</code>",
+
         text
+
     )
 
 
     # --------------------------------------------------------
-    # 斜体
+    # 删除 Markdown 标题符号
     # --------------------------------------------------------
 
     text = re.sub(
-        r"(?<!\*)\*([^*\n]+)\*(?!\*)",
-        r"<i>\1</i>",
+
+        r"(?m)^\s*#{1,6}\s*",
+
+        "",
+
         text
+
     )
 
 
     # --------------------------------------------------------
-    # 无序列表
+    # 恢复代码块
     # --------------------------------------------------------
 
-    text = re.sub(
-        r"(?m)^[ \t]*[-*]\s+",
-        "• ",
-        text
-    )
+    for index, code in enumerate(
+        code_blocks
+    ):
 
-
-    # --------------------------------------------------------
-    # 恢复 Markdown 链接
-    # --------------------------------------------------------
-
-    for index, (title, url) in enumerate(links):
-
-        anchor = (
-            f'<a href="{html.escape(url, quote=True)}">'
-            f'{html.escape(title)}'
-            f'</a>'
+        placeholder = (
+            f"__CODE_BLOCK_{index}__"
         )
+
+
+        code = html.escape(
+            code,
+            quote=False
+        )
+
+
+        replacement = (
+            "<pre>"
+            + code
+            + "</pre>"
+        )
+
 
         text = text.replace(
-            f"LINKPLACEHOLDER{index}",
-            anchor
+            placeholder,
+            replacement
         )
-
-
-    # --------------------------------------------------------
-    # 清理多余空行
-    # --------------------------------------------------------
-
-    text = re.sub(
-        r"\n{3,}",
-        "\n\n",
-        text
-    )
 
 
     # --------------------------------------------------------
@@ -335,9 +314,8 @@ def format_ai_reply(text, max_length=4000):
     if len(text) > max_length:
 
         text = (
-            text[:max_length - 100]
-            + "\n\n"
-            + "……内容过长，已截断。"
+            text[:max_length - 20]
+            + "\n\n…"
         )
 
 
@@ -345,7 +323,7 @@ def format_ai_reply(text, max_length=4000):
 
 
 # ============================================================
-# 发送 / 编辑 AI 消息
+# 编辑 AI 消息
 # ============================================================
 
 async def edit_ai_message(
@@ -355,7 +333,9 @@ async def edit_ai_message(
     text
 ):
 
-    formatted = format_ai_reply(text)
+    formatted = format_ai_reply(
+        text
+    )
 
 
     try:
@@ -375,18 +355,20 @@ async def edit_ai_message(
         )
 
 
-    except Exception as e:
+    except Exception:
 
-        print("=" * 60)
-        print("[FORMAT] HTML 排版发送失败")
-        print(repr(e))
-        print("=" * 60)
-
+        # ----------------------------------------------------
+        # HTML 失败时使用纯文本
+        # ----------------------------------------------------
 
         plain_text = re.sub(
+
             r"<[^>]+>",
+
             "",
+
             formatted
+
         )
 
 
@@ -400,4 +382,4 @@ async def edit_ai_message(
 
             disable_web_page_preview=True
 
-        )
+    )
