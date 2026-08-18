@@ -2,76 +2,23 @@ import os
 
 
 # ============================================================
-# Agnes API
+# Telegram Bot
 # ============================================================
 
-AGNES_API_KEY = os.environ.get("AGNES_API_KEY")
+TELEGRAM_TOKEN = os.environ.get(
+    "TELEGRAM_TOKEN"
+)
 
-AGNES_BASE_URL = "https://apihub.agnes-ai.com/v1"
 
+if not TELEGRAM_TOKEN:
 
-if not AGNES_API_KEY:
     raise RuntimeError(
-        "未检测到 AGNES_API_KEY，请在 Render → Environment 中配置。"
+        "未检测到 TELEGRAM_TOKEN，请在 Render → Environment 中配置。"
     )
 
 
 # ============================================================
-# 默认模型
-# ============================================================
-
-DEFAULT_MODEL = "agnes-2.0-flash"
-
-
-# ============================================================
-# 普通聊天模型
-#
-# 注意：
-# name 只负责显示名称
-# model_id 只作为字典 Key
-#
-# 不要把 ID 再写进 name，否则 /choose 会重复显示。
-# ============================================================
-
-CHAT_MODELS = {
-
-    "agnes-2.0-flash": {
-        "name": "Agnes 2.0 Flash",
-        "description": "速度快，适合日常聊天",
-    },
-
-    "agnes-2.5-flash": {
-        "name": "Agnes 2.5 Flash",
-        "description": "速度与能力平衡",
-    },
-
-    "agnes-2.5-pro": {
-        "name": "Agnes 2.5 Pro",
-        "description": "更强的推理与复杂问题能力",
-    },
-
-    "agnes-2.5-pro-alpha": {
-        "name": "Agnes 2.5 Pro Alpha",
-        "description": "实验性 Pro 模型",
-    },
-
-}
-
-
-# ============================================================
-# 图片理解模型
-#
-# 使用支持多模态输入的聊天模型。
-# 不使用 Agnes image generation 模型。
-# ============================================================
-
-IMAGE_MODEL = "agnes-2.0-flash"
-
-IMAGE_MODEL_NAME = "Agnes 2.0 Flash"
-
-
-# ============================================================
-# 群聊历史
+# 群聊历史最大记录
 # ============================================================
 
 MAX_HISTORY = 100
@@ -82,13 +29,3 @@ MAX_HISTORY = 100
 # ============================================================
 
 MAX_TELEGRAM_LENGTH = 4000
-
-
-# ============================================================
-# 数据库
-# ============================================================
-
-DATABASE_PATH = os.environ.get(
-    "DATABASE_PATH",
-    "bot.db"
-)
