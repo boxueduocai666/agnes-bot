@@ -2,14 +2,28 @@ import sqlite3
 import threading
 from datetime import datetime
 
+from config import DB_FILE
+
 
 # ============================================================
-# SQLite 配置
+# SQLite Lock
 # ============================================================
-
-DB_FILE = "bot_data.db"
 
 _db_lock = threading.Lock()
+
+
+# ============================================================
+# 获取数据库连接
+# ============================================================
+
+def get_connection():
+
+    conn = sqlite3.connect(
+        DB_FILE,
+        timeout=30
+    )
+
+    return conn
 
 
 # ============================================================
@@ -20,36 +34,40 @@ def init_database():
 
     with _db_lock:
 
-        conn = sqlite3.connect(DB_FILE)
+        conn = get_connection()
 
-        cursor = conn.cursor()
+        try:
 
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS group_messages (
+            cursor = conn.cursor()
 
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS group_messages (
 
-                chat_id INTEGER NOT NULL,
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
 
-                message_id INTEGER NOT NULL,
+                    chat_id INTEGER NOT NULL,
 
-                user_name TEXT,
+                    message_id INTEGER NOT NULL,
 
-                text TEXT,
+                    user_name TEXT,
 
-                created_at TEXT
+                    text TEXT,
 
-            )
-        """)
+                    created_at TEXT
 
-        cursor.execute("""
-            CREATE INDEX IF NOT EXISTS idx_group_messages_chat
-            ON group_messages(chat_id)
-        """)
+                )
+            """)
 
-        conn.commit()
+            cursor.execute("""
+                CREATE INDEX IF NOT EXISTS idx_group_messages_chat
+                ON group_messages(chat_id)
+            """)
 
-        conn.close()
+            conn.commit()
+
+        finally:
+
+            conn.close()
 
 
 # ============================================================
@@ -68,58 +86,66 @@ def save_message(
 
     with _db_lock:
 
-        conn = sqlite3.connect(DB_FILE)
+        conn = get_connection()
 
-        cursor = conn.cursor()
+        try:
 
-        cursor.execute("""
-            INSERT INTO group_messages
-            (
+            cursor = conn.cursor()
+
+            cursor.execute("""
+                INSERT INTO group_messages
+                (
+                    chat_id,
+                    message_id,
+                    user_name,
+                    text,
+                    created_at
+                )
+                VALUES (?, ?, ?, ?, ?)
+            """, (
                 chat_id,
                 message_id,
                 user_name,
                 text,
-                created_at
-            )
-            VALUES (?, ?, ?, ?, ?)
-        """, (
-            chat_id,
-            message_id,
-            user_name,
-            text,
-            datetime.utcnow().isoformat()
-        ))
+                datetime.utcnow().isoformat()
+            ))
 
-        conn.commit()
+            conn.commit()
 
-        conn.close()
+        finally:
+
+            conn.close()
 
 
 # ============================================================
-# 获取群聊有效消息数量
+# 获取群聊消息数量
 # ============================================================
 
 def get_message_count(chat_id):
 
     with _db_lock:
 
-        conn = sqlite3.connect(DB_FILE)
+        conn = get_connection()
 
-        cursor = conn.cursor()
+        try:
 
-        cursor.execute("""
-            SELECT COUNT(*)
-            FROM group_messages
-            WHERE chat_id = ?
-        """, (
-            chat_id,
-        ))
+            cursor = conn.cursor()
 
-        count = cursor.fetchone()[0]
+            cursor.execute("""
+                SELECT COUNT(*)
+                FROM group_messages
+                WHERE chat_id = ?
+            """, (
+                chat_id,
+            ))
 
-        conn.close()
+            row = cursor.fetchone()
 
-        return count
+            return row[0] if row else 0
+
+        finally:
+
+            conn.close()
 
 
 # ============================================================
@@ -130,26 +156,30 @@ def get_messages(chat_id):
 
     with _db_lock:
 
-        conn = sqlite3.connect(DB_FILE)
+        conn = get_connection()
 
-        cursor = conn.cursor()
+        try:
 
-        cursor.execute("""
-            SELECT
-                message_id,
-                user_name,
-                text,
-                created_at
-            FROM group_messages
-            WHERE chat_id = ?
-            ORDER BY id ASC
-        """, (
-            chat_id,
-        ))
+            cursor = conn.cursor()
 
-        rows = cursor.fetchall()
+            cursor.execute("""
+                SELECT
+                    message_id,
+                    user_name,
+                    text,
+                    created_at
+                FROM group_messages
+                WHERE chat_id = ?
+                ORDER BY id ASC
+            """, (
+                chat_id,
+            ))
 
-        conn.close()
+            rows = cursor.fetchall()
+
+        finally:
+
+            conn.close()
 
     return [
 
@@ -173,20 +203,24 @@ def clear_messages(chat_id):
 
     with _db_lock:
 
-        conn = sqlite3.connect(DB_FILE)
+        conn = get_connection()
 
-        cursor = conn.cursor()
+        try:
 
-        cursor.execute("""
-            DELETE FROM group_messages
-            WHERE chat_id = ?
-        """, (
-            chat_id,
-        ))
+            cursor = conn.cursor()
 
-        conn.commit()
+            cursor.execute("""
+                DELETE FROM group_messages
+                WHERE chat_id = ?
+            """, (
+                chat_id,
+            ))
 
-        conn.close()
+            conn.commit()
+
+        finally:
+
+            conn.close()
 
 
 # ============================================================
@@ -195,8 +229,12 @@ def clear_messages(chat_id):
 
 def get_and_clear_messages(chat_id):
 
-    messages = get_messages(chat_id)
+    messages = get_messages(
+        chat_id
+    )
 
-    clear_messages(chat_id)
+    clear_messages(
+        chat_id
+    )
 
     return messages
