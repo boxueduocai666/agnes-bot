@@ -1,26 +1,15 @@
 import sqlite3
-from contextlib import closing
-
-from config import (
-    DATABASE_PATH,
-    MAX_HISTORY,
-)
+import threading
+from datetime import datetime
 
 
 # ============================================================
-# 数据库连接
+# SQLite 配置
 # ============================================================
 
-def get_connection():
+DB_FILE = "bot_data.db"
 
-    connection = sqlite3.connect(
-        DATABASE_PATH,
-        timeout=10
-    )
-
-    connection.row_factory = sqlite3.Row
-
-    return connection
+_db_lock = threading.Lock()
 
 
 # ============================================================
@@ -29,19 +18,27 @@ def get_connection():
 
 def init_database():
 
-    with closing(get_connection()) as conn:
+    with _db_lock:
+
+        conn = sqlite3.connect(DB_FILE)
 
         cursor = conn.cursor()
 
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS group_messages (
+
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
+
                 chat_id INTEGER NOT NULL,
-                user_id INTEGER,
+
+                message_id INTEGER NOT NULL,
+
                 user_name TEXT,
+
                 text TEXT,
-                message_id INTEGER,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+
+                created_at TEXT
+
             )
         """)
 
@@ -52,228 +49,154 @@ def init_database():
 
         conn.commit()
 
+        conn.close()
+
 
 # ============================================================
-# 添加群聊消息
+# 保存群聊消息
 # ============================================================
 
-def add_message(
+def save_message(
     chat_id,
-    user_id,
+    message_id,
     user_name,
-    text,
-    message_id
+    text
 ):
 
     if not text:
         return
 
-    with closing(get_connection()) as conn:
+    with _db_lock:
 
-        conn.execute(
-            """
+        conn = sqlite3.connect(DB_FILE)
+
+        cursor = conn.cursor()
+
+        cursor.execute("""
             INSERT INTO group_messages
             (
                 chat_id,
-                user_id,
+                message_id,
                 user_name,
                 text,
-                message_id
+                created_at
             )
             VALUES (?, ?, ?, ?, ?)
-            """,
-            (
-                chat_id,
-                user_id,
-                user_name,
-                text,
-                message_id
-            )
-        )
-
-        # ----------------------------------------------------
-        # 只保留最近 MAX_HISTORY 条
-        # ----------------------------------------------------
-
-        conn.execute(
-            """
-            DELETE FROM group_messages
-            WHERE chat_id = ?
-            AND id NOT IN (
-                SELECT id
-                FROM group_messages
-                WHERE chat_id = ?
-                ORDER BY id DESC
-                LIMIT ?
-            )
-            """,
-            (
-                chat_id,
-                chat_id,
-                MAX_HISTORY
-            )
-        )
+        """, (
+            chat_id,
+            message_id,
+            user_name,
+            text,
+            datetime.utcnow().isoformat()
+        ))
 
         conn.commit()
 
+        conn.close()
+
 
 # ============================================================
-# 获取群聊历史
+# 获取群聊有效消息数量
 # ============================================================
 
-def get_messages(
-    chat_id,
-    limit=None
-):
+def get_message_count(chat_id):
 
-    if limit is None:
-        limit = MAX_HISTORY
+    with _db_lock:
 
-    with closing(get_connection()) as conn:
+        conn = sqlite3.connect(DB_FILE)
 
-        rows = conn.execute(
-            """
+        cursor = conn.cursor()
+
+        cursor.execute("""
+            SELECT COUNT(*)
+            FROM group_messages
+            WHERE chat_id = ?
+        """, (
+            chat_id,
+        ))
+
+        count = cursor.fetchone()[0]
+
+        conn.close()
+
+        return count
+
+
+# ============================================================
+# 获取群聊消息
+# ============================================================
+
+def get_messages(chat_id):
+
+    with _db_lock:
+
+        conn = sqlite3.connect(DB_FILE)
+
+        cursor = conn.cursor()
+
+        cursor.execute("""
             SELECT
-                id,
-                chat_id,
-                user_id,
+                message_id,
                 user_name,
                 text,
-                message_id,
                 created_at
             FROM group_messages
             WHERE chat_id = ?
-            ORDER BY id DESC
-            LIMIT ?
-            """,
-            (
-                chat_id,
-                limit
-            )
-        ).fetchall()
+            ORDER BY id ASC
+        """, (
+            chat_id,
+        ))
 
+        rows = cursor.fetchall()
 
-    # 数据库按倒序取出
-    # 总结时重新恢复正常时间顺序
+        conn.close()
 
-    rows = list(reversed(rows))
+    return [
 
-    return [dict(row) for row in rows]
+        {
+            "message_id": row[0],
+            "user": row[1],
+            "text": row[2],
+            "created_at": row[3],
+        }
 
+        for row in rows
 
-# ============================================================
-# 判断是否属于无意义打招呼
-# ============================================================
-
-def is_meaningless_greeting(text):
-
-    if not text:
-        return True
-
-    normalized = (
-        text
-        .strip()
-        .lower()
-        .replace(" ", "")
-        .replace("　", "")
-        .replace("！", "")
-        .replace("!", "")
-        .replace("？", "")
-        .replace("?", "")
-        .replace("。", "")
-        .replace(".", "")
-    )
-
-
-    greetings = {
-
-        "你好",
-        "您好",
-        "嗨",
-        "哈喽",
-        "hello",
-        "hi",
-        "hey",
-        "早",
-        "早上好",
-        "晚上好",
-        "午安",
-        "晚安",
-        "在吗",
-        "有人吗",
-        "大家好",
-        "各位好",
-        "yo",
-
-    }
-
-
-    return normalized in greetings
+    ]
 
 
 # ============================================================
-# 获取用于总结的消息
-#
-# 自动过滤：
-# - 单纯打招呼
-# - 空消息
-# - 命令
-# ============================================================
-
-def get_summary_messages(
-    chat_id,
-    limit=None
-):
-
-    messages = get_messages(
-        chat_id,
-        limit
-    )
-
-
-    result = []
-
-
-    for item in messages:
-
-        text = item.get(
-            "text",
-            ""
-        ).strip()
-
-
-        if not text:
-            continue
-
-
-        if text.startswith("/"):
-            continue
-
-
-        if is_meaningless_greeting(text):
-            continue
-
-
-        result.append(item)
-
-
-    return result
-
-
-# ============================================================
-# 清理指定群聊历史
+# 删除已经总结的消息
 # ============================================================
 
 def clear_messages(chat_id):
 
-    with closing(get_connection()) as conn:
+    with _db_lock:
 
-        conn.execute(
-            """
+        conn = sqlite3.connect(DB_FILE)
+
+        cursor = conn.cursor()
+
+        cursor.execute("""
             DELETE FROM group_messages
             WHERE chat_id = ?
-            """,
-            (chat_id,)
-        )
+        """, (
+            chat_id,
+        ))
 
         conn.commit()
+
+        conn.close()
+
+
+# ============================================================
+# 获取并清空
+# ============================================================
+
+def get_and_clear_messages(chat_id):
+
+    messages = get_messages(chat_id)
+
+    clear_messages(chat_id)
+
+    return messages
