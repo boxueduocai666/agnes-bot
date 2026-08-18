@@ -1,3 +1,5 @@
+import os
+
 from telegram import (
     Update,
     BotCommand,
@@ -16,6 +18,10 @@ from telegram.ext import (
 from config import (
     CHAT_MODELS,
     DEFAULT_MODEL,
+)
+
+from database import (
+    init_database,
 )
 
 from ai_logic import (
@@ -42,15 +48,21 @@ async def start_command(
     if not update.message:
         return
 
+
     user_id = update.effective_user.id
+
 
     current_model = get_user_model(
         user_id
     )
 
-    current_name = get_model_display_name(
-        current_model
+
+    current_name = (
+        get_model_display_name(
+            current_model
+        )
     )
+
 
     await update.message.reply_text(
 
@@ -72,6 +84,7 @@ async def start_command(
         "输入 /help 查看完整功能。",
 
         parse_mode="Markdown"
+
     )
 
 
@@ -86,6 +99,7 @@ async def help_command(
 
     if not update.message:
         return
+
 
     await update.message.reply_text(
 
@@ -116,6 +130,7 @@ async def help_command(
         "只有 @机器人、回复机器人或相关命令才会触发。",
 
         parse_mode="Markdown"
+
     )
 
 
@@ -131,25 +146,33 @@ async def model_command(
     if not update.message:
         return
 
+
     user_id = update.effective_user.id
+
 
     current_model = get_user_model(
         user_id
     )
+
 
     model_info = CHAT_MODELS.get(
         current_model,
         {}
     )
 
+
     description = model_info.get(
         "description",
         ""
     )
 
-    model_name = get_model_display_name(
-        current_model
+
+    model_name = (
+        get_model_display_name(
+            current_model
+        )
     )
+
 
     await update.message.reply_text(
 
@@ -164,14 +187,12 @@ async def model_command(
         "使用 /choose 可以切换模型。",
 
         parse_mode="Markdown"
+
     )
 
 
 # ============================================================
 # /choose
-#
-# 只负责显示模型名称。
-# 模型 ID 只存在于 callback_data 中。
 # ============================================================
 
 async def choose_command(
@@ -182,35 +203,39 @@ async def choose_command(
     if not update.message:
         return
 
+
     user_id = update.effective_user.id
+
 
     current_model = get_user_model(
         user_id
     )
 
-    current_name = get_model_display_name(
-        current_model
+
+    current_name = (
+        get_model_display_name(
+            current_model
+        )
     )
+
 
     keyboard = []
 
 
     # --------------------------------------------------------
-    # 生成模型按钮
+    # 每个模型一个按钮
     # --------------------------------------------------------
 
     for model_id, info in CHAT_MODELS.items():
 
-        # 只读取 name
-        # 不把 model_id 拼到按钮文字里
+        # 这里只显示 name
+        # 不显示 model_id
 
         button_name = info.get(
             "name",
             model_id
         )
 
-
-        # 当前模型增加勾选标记
 
         if model_id == current_model:
 
@@ -226,9 +251,6 @@ async def choose_command(
 
                 button_name,
 
-                # ID 只放这里
-                # 用户看不到
-
                 callback_data=(
                     f"choose:{model_id}"
                 )
@@ -239,7 +261,7 @@ async def choose_command(
 
 
     # --------------------------------------------------------
-    # 关闭按钮
+    # 关闭
     # --------------------------------------------------------
 
     keyboard.append([
@@ -271,11 +293,12 @@ async def choose_command(
         reply_markup=reply_markup,
 
         parse_mode="Markdown"
+
     )
 
 
 # ============================================================
-# 模型按钮回调
+# 模型按钮
 # ============================================================
 
 async def choose_callback(
@@ -304,10 +327,6 @@ async def choose_callback(
         return
 
 
-    # --------------------------------------------------------
-    # 获取模型 ID
-    # --------------------------------------------------------
-
     value = data.split(
         ":",
         1
@@ -315,7 +334,7 @@ async def choose_callback(
 
 
     # --------------------------------------------------------
-    # 关闭菜单
+    # 关闭
     # --------------------------------------------------------
 
     if value == "close":
@@ -330,7 +349,7 @@ async def choose_callback(
 
 
     # --------------------------------------------------------
-    # 检查模型是否存在
+    # 检查模型
     # --------------------------------------------------------
 
     if value not in CHAT_MODELS:
@@ -346,7 +365,7 @@ async def choose_callback(
 
 
     # --------------------------------------------------------
-    # 切换模型
+    # 设置模型
     # --------------------------------------------------------
 
     success = set_user_model(
@@ -370,28 +389,24 @@ async def choose_callback(
         return
 
 
-    # --------------------------------------------------------
-    # 获取模型信息
-    # --------------------------------------------------------
-
     model_info = CHAT_MODELS.get(
         value,
         {}
     )
 
-    model_name = get_model_display_name(
-        value
+
+    model_name = (
+        get_model_display_name(
+            value
+        )
     )
+
 
     description = model_info.get(
         "description",
         ""
     )
 
-
-    # --------------------------------------------------------
-    # 返回切换结果
-    # --------------------------------------------------------
 
     await query.edit_message_text(
 
@@ -404,6 +419,7 @@ async def choose_callback(
         "之后你的 AI 对话将使用这个模型。",
 
         parse_mode="Markdown"
+
     )
 
 
@@ -462,10 +478,15 @@ async def setup_bot_commands(
 def main():
 
     # --------------------------------------------------------
-    # Telegram Token
+    # 初始化 SQLite
     # --------------------------------------------------------
 
-    import os
+    init_database()
+
+
+    # --------------------------------------------------------
+    # Telegram Token
+    # --------------------------------------------------------
 
     TELEGRAM_TOKEN = os.environ.get(
         "TELEGRAM_TOKEN"
@@ -483,7 +504,7 @@ def main():
 
 
     # --------------------------------------------------------
-    # 创建 Application
+    # Application
     # --------------------------------------------------------
 
     application = (
@@ -627,7 +648,7 @@ def main():
 
 
     # ========================================================
-    # 启动 Bot
+    # 启动
     # ========================================================
 
     application.run_polling()
