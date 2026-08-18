@@ -1,19 +1,9 @@
 import html
 import re
 
-from collections import defaultdict
-
 from config import (
-    MAX_HISTORY,
     MAX_TELEGRAM_LENGTH,
 )
-
-
-# ============================================================
-# 群聊历史
-# ============================================================
-
-group_history = defaultdict(list)
 
 
 # ============================================================
@@ -23,9 +13,7 @@ group_history = defaultdict(list)
 def get_message_text(message):
 
     if not message:
-
         return ""
-
 
     return (
         message.text
@@ -41,15 +29,15 @@ def get_message_text(message):
 def get_quoted_message(message):
 
     if not message:
-
         return None
 
 
-    replied = message.reply_to_message
+    replied = (
+        message.reply_to_message
+    )
 
 
     if not replied:
-
         return None
 
 
@@ -118,7 +106,6 @@ def build_quote_context(message):
 
 
     if not quote:
-
         return ""
 
 
@@ -198,7 +185,9 @@ def search_web(
 
             ):
 
-                results.append(result)
+                results.append(
+                    result
+                )
 
 
         if not results:
@@ -271,10 +260,13 @@ def format_ai_reply(text):
 
 
     # --------------------------------------------------------
-    # 防止 AI 输出 HTML
+    # 先 Escape HTML
     # --------------------------------------------------------
 
-    text = html.escape(text)
+    text = html.escape(
+        text,
+        quote=False
+    )
 
 
     # --------------------------------------------------------
@@ -386,7 +378,7 @@ def format_ai_reply(text):
 
 
     # --------------------------------------------------------
-    # 清理多余空行
+    # 清理空行
     # --------------------------------------------------------
 
     text = re.sub(
